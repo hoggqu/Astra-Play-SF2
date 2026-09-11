@@ -13,7 +13,8 @@ from pathlib import Path
 NAMES = {0: 'Ryu', 1: 'Honda', 2: 'Blanka', 3: 'Guile', 5: 'Chun-Li', 6: 'Zangief',
          7: 'Dhalsim', 8: 'Bison', 9: 'Sagat', 10: 'Balrog', 11: 'Vega'}
 SCHEMAS = {'astra.rl-campaign.v1': 'legacy_rpc', 'astra.rl-native-campaign.v1': 'native_batch',
-           'astra.rl-native-campaign.actions16.v1': 'native_batch_actions16'}
+           'astra.rl-native-campaign.actions16.v1': 'native_batch_actions16',
+           'astra.rl-reliability-campaign.v1': 'reliability_actions16'}
 TRAINING_SCHEMAS = ('astra.rl-scaled.v1', 'astra.rl-batch-prototype.v1',
                     'astra.rl-batch-prototype.actions16.v1')
 CONTINUOUS_SCHEMAS = ('astra.rl-continuous.v1', 'astra.rl-continuous.actions16.v1')
@@ -23,8 +24,10 @@ OUTCOMES = ('win', 'loss', 'draw')
 def action_identity(result):
     """Keep declared identity and schema family separate; do not invent an interface."""
     schema = result.get('schema') or ''
+    is16 = ('.actions16.' in schema or result.get('actions') == 16 or
+            result.get('action_interface') == 'ken_actions16_lp_mp_uppercut_v1')
     return {'action_interface': result.get('action_interface'), 'actions': result.get('actions'),
-            'action_schema_family': ('actions16' if '.actions16.' in schema else 'legacy_actions15') if schema else None}
+            'action_schema_family': ('actions16' if is16 else 'legacy_actions15') if schema or is16 else None}
 
 
 def read_object(path, issues, required=False):
@@ -167,6 +170,9 @@ def continuous_summary(folder, native_required, issues, interface_required=False
               'difficulty': result.get('difficulty'), 'result_sha256': digest,
               'model_sha256': result.get('model_sha256'), 'error': result.get('error'),
               'native_timing': result.get('native_timing', False), 'attempts': [],
+              'native_timing_audit': result.get('native_timing_audit'),
+              'attempts_requested': result.get('attempts_requested'),
+              'stop_on_first_clear': result.get('stop_on_first_clear'),
               'rounds': {}, 'unverified_observed_rounds': {}}
     protocol_path = folder/'sampling-protocol.json'
     protocol, protocol_hash = read_object(protocol_path, issues)
@@ -184,9 +190,9 @@ def continuous_summary(folder, native_required, issues, interface_required=False
     output['action_interface_audit'] = result.get('action_interface_audit')
     output['action_interface_protocol'] = interface or None
     output['action_interface_protocol_sha256'] = interface_hash
-    interface_required = (interface_required or '.actions16.' in result.get('schema', '') or
+    interface_required = (interface_required or output['action_schema_family'] == 'actions16' or
                           interface_path.exists() or 'action_interface' in result)
-    native_required = native_required or '.actions16.' in result.get('schema', '')
+    native_required = native_required or output['action_schema_family'] == 'actions16'
     output['action_interface_audit_required'] = interface_required
     audits = [(native_required, result.get('native_timing_audit')),
               (sampling_required, result.get('sampling_audit')),
@@ -246,6 +252,47 @@ def continuous_summary(folder, native_required, issues, interface_required=False
     return output
 
 
+def reliability_candidate(cycle, play):
+    """Describe one full-20 candidate only; never pool different model outcomes."""
+    attempts = play['attempts']
+    counts = play['attempt_counts']
+    matches = [m['path'] for a in attempts for m in a['matches']]
+    errors = []
+    if play['status'] == 'invalid' or cycle.get('status') == 'invalid' or counts.get('invalid'):
+        state = 'invalid'
+    elif play['status'] != 'complete' or play['audit_state'] == 'pending' or cycle.get('status') != 'complete':
+        state = 'pending'
+    else:
+        state = 'complete'
+        if (play['difficulty'] != 3 or play['stop_on_first_clear'] is not False or
+                play['attempts_requested'] != 20 or len(attempts) != 20 or
+                [a['id'] for a in attempts] != [f'l3-{i:03d}' for i in range(1,21)]):
+            errors.append('Requires all twenty ordered Normal natural-coin attempts without early stop')
+        if not cycle.get('model_sha256') or play['model_sha256'] != cycle['model_sha256']:
+            errors.append('Candidate/evaluation model identities differ')
+        if len(matches) != len(set(matches)):
+            errors.append('Reused match evidence within this candidate')
+        for field, key in (('native_timing_audit','matches'), ('action_interface_audit','checked_matches')):
+            audit = play.get(field) or {}
+            if audit.get('ok') is not True or audit.get(key) != len(matches):
+                errors.append('Missing or incomplete '+field)
+        code = cycle.get('exit_codes', {}).get('continuous')
+        if code != (0 if counts.get('rl_gameplay_clear') else 1):
+            errors.append('Evaluation exit code differs from outcomes or is missing')
+        if sum(counts.get(k, 0) for k in ('rl_gameplay_clear','loss')) != 20:
+            errors.append('Invalid or pending attempts cannot be replaced or counted as complete')
+        if errors:
+            state = 'invalid'
+    clears = counts.get('rl_gameplay_clear', 0)
+    return {'status': state, 'required_attempts': 20, 'required_clears': 10,
+            'model_sha256': cycle.get('model_sha256'), 'observed_attempts': len(attempts),
+            'attempt_counts': counts, 'clears': clears, 'losses': counts.get('loss', 0),
+            'clear_rate': clears/20 if state == 'complete' else None,
+            'goal_achieved': state == 'complete' and clears >= 10, 'errors': errors,
+            'failed_opponents': dict(Counter(a['failed_opponent_name'] for a in attempts
+                if a['outcome'] == 'loss' and a['failed_opponent_name']))}
+
+
 def summarize_campaign(path):
     path = Path(path).resolve()
     issues = []
@@ -270,11 +317,17 @@ def summarize_campaign(path):
             issues.append({'path': str(folder), 'error': 'Unexpected cycle directory name'})
             continue
         cycle = ordinals.get(ordinal, {})
-        report['cycles'].append({'cycle': ordinal, 'status': cycle.get('status', 'unlisted'),
+        item = {'cycle': ordinal, 'status': cycle.get('status', 'unlisted'),
                                  'model_sha256': cycle.get('model_sha256'), 'stage': cycle.get('stage'),
                                  'training': training_summary(folder/'train', issues),
                                  'continuous': continuous_summary(folder/'continuous', report['kind'] != 'legacy_rpc', issues,
-                                                                  interface_required=report['action_schema_family'] == 'actions16')})
+                                                                  interface_required=report['action_schema_family'] == 'actions16')}
+        if report['kind'] == 'reliability_actions16':
+            if ordinal == 1 and not (folder/'train').exists():
+                item['training']['status'] = 'not_applicable'
+                item['training']['note'] = 'Initial frozen candidate is evaluated before any new training'
+            item['reliability'] = reliability_candidate(cycle, item['continuous'])
+        report['cycles'].append(item)
     def combine(tables):
         combined = {}
         for table in tables:
@@ -299,6 +352,11 @@ def summarize_campaign(path):
         'invalid_stages': [{'cycle': c['cycle'], 'stage': name}
                            for c in report['cycles'] for name in ('training', 'continuous')
                            if c[name]['status'] == 'invalid']}
+    if report['kind'] == 'reliability_actions16':
+        qualified = [c['cycle'] for c in report['cycles'] if c['reliability']['goal_achieved']]
+        report['reliability'] = {'qualifying_candidates': qualified,
+            'goal_achieved': result.get('status') == 'complete' and bool(qualified),
+            'aggregation_rule': 'Candidate-specific full20 only; aggregate totals never establish success'}
     return report
 
 
@@ -335,11 +393,24 @@ def render_markdown(report):
                   f"路径：`{run['path']}`", f"结果快照 SHA-256：`{run['result_sha256']}`", '']
         lines += sampling_markdown(run)
         totals = run['aggregate']
+        if 'reliability' in run:
+            lines += ['以下合计仅为跨候选工作量；不能合并成某一冻结模型的通关率或达标成绩。', '',
+                      f"完整 20 币且至少 10 通关的候选：{run['reliability']['qualifying_candidates']}；派生达标：{run['reliability']['goal_achieved']}。", '']
         lines += [f"全路线结果：{totals['attempt_counts'].get('rl_gameplay_clear', 0)} 通关 / {totals['attempt_counts'].get('loss', 0)} 失败 / {totals['attempt_counts'].get('invalid', 0)} 无效 / {totals['attempt_counts'].get('pending', 0)} 待定；失败对手：{json.dumps(totals['failed_opponents'], ensure_ascii=False)}。", '']
         if run.get('error'):
             lines += [f"运行错误：{run['error']}", '']
         for cycle in run['cycles']:
             train, play = cycle['training'], cycle['continuous']
+            if 'reliability' in cycle:
+                measured = cycle['reliability']
+                rate = f"{measured['clear_rate']:.1%}" if measured['clear_rate'] is not None else '未完成/无效，不计算'
+                lines += [f"候选 {cycle['cycle']} 完整 20 币检查：{measured['status']}；已观察 {measured['observed_attempts']} 币；"
+                          f"通关 {measured['clears']} / 失败 {measured['losses']}；完整批次通关率：{rate}；达标：{measured['goal_achieved']}。",
+                          f"本候选失败对手：{json.dumps(measured['failed_opponents'], ensure_ascii=False)}。", '']
+                if measured['errors']:
+                    lines += ['完整批次问题：'+'；'.join(measured['errors']), '']
+                if train['status'] == 'not_applicable':
+                    lines += ['首候选直接评估初始冻结模型，没有新训练阶段。', '']
             lines += [f"### Cycle {cycle['cycle']}（{cycle['status']}）", '',
                       f"模型：`{cycle.get('model_sha256') or train.get('model_sha256') or '尚无最终模型'}`", '',
                       f"游玩选择方式：{play.get('selection') or '未声明'}；策略种子：{play.get('policy_seed')}；PRNG：{play.get('policy_prng')}；采样审计：{json.dumps(play.get('sampling_audit'), ensure_ascii=False)}。", '',
@@ -351,6 +422,8 @@ def render_markdown(report):
             tables = [train['rounds'], play['rounds'], play['unverified_observed_rounds']]
             for opponent in sorted(set().union(*(set(table) for table in tables)), key=int):
                 counts = ['/'.join(str(table.get(opponent, {}).get(k, 0)) for k in OUTCOMES) for table in tables]
+                if 'reliability' in cycle and opponent in play['rounds']:
+                    counts[1] += f"（胜率 {play['rounds'][opponent]['win_rate']:.1%}）"
                 lines.append(f"| {NAMES[int(opponent)]} | {' | '.join(counts)} |")
             lines += ['']+training_round_markdown(train)
             lines += ['', '整路线尝试：', '', '| 尝试 | 结果 | 已赢对手数 | 失利对手 |', '|---|---|---:|---|']

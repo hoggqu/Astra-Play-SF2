@@ -40,7 +40,97 @@ def fixture(root, native=False):
     return campaign
 
 
+def reliability_fixture(root, scores):
+    campaign = root/'reliability'
+    cycles = []
+    for ordinal, clears in enumerate(scores, 1):
+        model = f'model-{ordinal}'
+        cycle = campaign/f'cycle-{ordinal:03d}'
+        play = cycle/'continuous'
+        attempts = []
+        for coin in range(1, 21):
+            clear = coin <= clears
+            opponents = [0, 1, 2, 3, 5, 6, 7, 10, 11, 9, 8] if clear else [0]
+            paths = []
+            for index, opponent in enumerate(opponents, 1):
+                relative = f'training/l3-{coin:03d}/m{index:02d}.json'
+                paths.append(relative)
+                write(play/relative, {'summary': {'status': 'complete', 'valid_continuous': True,
+                    'model_sha256': model, 'opponent': opponent,
+                    'result': 'ken_win' if clear else 'cpu_win', 'score': [2, 0] if clear else [0, 2]},
+                    'rounds': [{'outcome': 'win' if clear else 'loss'}]*2})
+            attempts.append({'id': f'l3-{coin:03d}', 'outcome': 'rl_gameplay_clear' if clear else 'loss',
+                             'audit': {'ok': True}, 'matches': paths})
+        count = sum(len(a['matches']) for a in attempts)
+        write(play/'result.json', {'schema': 'astra.rl-continuous.actions16.v1', 'status': 'complete',
+            'actions': 16, 'action_interface': 'ken_actions16_lp_mp_uppercut_v1', 'model_sha256': model,
+            'difficulty': 3, 'native_timing': True, 'attempts_requested': 20, 'stop_on_first_clear': False,
+            'native_timing_audit': {'ok': True, 'matches': count},
+            'action_interface_audit': {'ok': True, 'checked_matches': count}, 'attempts': attempts})
+        if ordinal > 1:
+            write(cycle/'train/result.json', {'schema': 'astra.rl-batch-prototype.actions16.v1',
+                'status': 'complete', 'actions': 16, 'model_sha256': model})
+        cycles.append({'ordinal': ordinal, 'status': 'complete', 'model_sha256': model,
+                       'exit_codes': {'continuous': 0 if clears else 1}})
+    write(campaign/'result.json', {'schema': 'astra.rl-reliability-campaign.v1', 'status': 'complete',
+        'difficulty': 3, 'actions': 16, 'action_interface': 'ken_actions16_lp_mp_uppercut_v1',
+        'cycles': cycles})
+    return campaign
+
+
 class ReportTests(unittest.TestCase):
+    def test_reliability_candidates_do_not_pool_and_first_has_no_training(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = reliability_fixture(Path(folder), [9, 9])
+            report = summarize([path, path])
+            run = report['campaigns'][0]
+            self.assertEqual(run['action_schema_family'], 'actions16')
+            self.assertEqual(run['kind'], 'reliability_actions16')
+            self.assertEqual(run['issues'], [])
+            self.assertEqual(run['cycles'][0]['training']['status'], 'not_applicable')
+            self.assertEqual([c['reliability']['clear_rate'] for c in run['cycles']], [.45, .45])
+            self.assertEqual(run['aggregate']['attempt_counts'], {'rl_gameplay_clear': 18, 'loss': 22})
+            self.assertFalse(run['reliability']['goal_achieved'])
+            self.assertEqual(run['reliability']['qualifying_candidates'], [])
+            first = run['cycles'][0]
+            self.assertEqual(first['reliability']['failed_opponents'], {'Ryu': 11})
+            self.assertEqual(first['continuous']['rounds']['0']['win_rate'], 18/40)
+            markdown = render_markdown(report)
+            self.assertIn('不能合并成某一冻结模型', markdown)
+            self.assertIn('没有新训练阶段', markdown)
+            self.assertIn('胜率 45.0%', markdown)
+
+    def test_reliability_exact_twenty_qualifies_one_fixed_candidate(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = reliability_fixture(Path(folder), [9, 10])
+            run = summarize([path])['campaigns'][0]
+            self.assertTrue(run['reliability']['goal_achieved'])
+            self.assertEqual(run['reliability']['qualifying_candidates'], [2])
+            self.assertEqual(run['cycles'][1]['reliability']['model_sha256'], 'model-2')
+
+    def test_reliability_short_or_wrong_model_invalid_and_audit_window_pending(self):
+        for mutation in ('short', 'early_stop', 'model', 'native', 'interface', 'pending'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as folder:
+                path = reliability_fixture(Path(folder), [10])
+                result_path = path/'cycle-001/continuous/result.json'
+                result = json.loads(result_path.read_text())
+                if mutation == 'short': result['attempts'] = result['attempts'][:10]
+                elif mutation == 'early_stop': result['stop_on_first_clear'] = True
+                elif mutation == 'model':
+                    parent = json.loads((path/'result.json').read_text())
+                    parent['cycles'][0]['model_sha256'] = 'different-model'
+                    write(path/'result.json', parent)
+                elif mutation == 'native': result['native_timing_audit']['ok'] = False
+                elif mutation == 'interface': result['action_interface_audit']['ok'] = False
+                elif mutation == 'pending': del result['action_interface_audit']
+                write(result_path, result)
+                run = summarize([path])['campaigns'][0]
+                candidate = run['cycles'][0]['reliability']
+                self.assertEqual(candidate['status'], 'pending' if mutation == 'pending' else 'invalid')
+                self.assertFalse(candidate['goal_achieved'])
+                self.assertIsNone(candidate['clear_rate'])
+                self.assertFalse(run['reliability']['goal_achieved'])
+
     def test_weighted_sampling_lineage_survives_campaign_and_standalone_reports(self):
         with tempfile.TemporaryDirectory() as folder:
             campaign = fixture(Path(folder), native=True)
