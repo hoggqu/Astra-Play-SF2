@@ -1,6 +1,7 @@
 -- Native-time driving; caller filters zero-time callbacks and applies deferred inputs in frame_done.
 -- No hit/side cancellation: the training action macro always lasts 12 frames.
 local Core=assert(loadfile('training/runtime/play_core.lua'))()
+Core=assert(loadfile('training/runtime/rl_settlement.lua'))()(Core)
 local Actions=assert(loadfile('training/runtime/rl_actions.lua'))()
 function Core:rl_prime(s)
  self.rl_round=self.round;self.rl_elapsed=0

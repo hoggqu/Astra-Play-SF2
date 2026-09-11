@@ -3,6 +3,8 @@ import argparse
 from functools import partial
 import hashlib
 import json
+import os
+import uuid
 from pathlib import Path
 import signal
 import time
@@ -20,6 +22,35 @@ from astra_play_sf2.transport import Bridge
 from .dataset import load_dataset
 from .env import MameEnv
 from .vector import ManagedVec
+
+
+def checkpoint_interval(requested, quantum):
+    """Round up to a complete PPO update; keep all supported worker counts usable."""
+    if type(requested) is not int or requested < 1:
+        raise ValueError('checkpoint-every must be a positive integer')
+    return ((requested+quantum-1)//quantum)*quantum
+
+
+def save_model_checkpoint(model, output, steps, name=None):
+    """Publish a new complete PPO ZIP atomically, including critic and optimizer."""
+    if model.num_timesteps != steps:
+        raise ValueError('Checkpoint step differs from completed model steps')
+    output = Path(output)
+    target = output/(name or f'checkpoint-{steps:09d}.zip')
+    if target.exists():
+        raise FileExistsError('Never overwrite a completed checkpoint: '+str(target))
+    temporary = output/f'.{target.stem}-{uuid.uuid4().hex}.tmp.zip'
+    try:
+        model.save(temporary)
+        with temporary.open('rb') as stream:
+            os.fsync(stream.fileno())
+        digest = sha256(temporary)
+        temporary.replace(target)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return {'path': target.name, 'steps': steps, 'sha256': digest,
+            'optimizer_updates': model._n_updates, 'complete_update': True}
 
 
 def live_policy(model):
@@ -156,6 +187,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--workers', type=int, choices=range(1, 9), default=4)
     parser.add_argument('--steps', type=int, default=4096)
+    parser.add_argument('--checkpoint-every', type=int, default=20480, help='Save a recoverable complete PPO update approximately every N decisions')
     parser.add_argument('--block', type=int, choices=(1, 16, 32, 64, 128, 256), default=64)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--init-model', type=Path)
@@ -168,6 +200,10 @@ def main():
         parser.error('Choose one reference mode')
     if args.steps <= 0 or (not is_parity and args.steps % (args.workers*256)) or (is_parity and args.steps>256):
         parser.error('Steps must be workers*256 multiples, or 1..256 for parity')
+    try:
+        effective_checkpoint_interval = checkpoint_interval(args.checkpoint_every, args.workers*256)
+    except ValueError as error:
+        parser.error(str(error))
     output = args.output.resolve();output.mkdir(parents=True, exist_ok=False)
     config = load_config();groups, difficulty = load_dataset(args.dataset)
     torch.set_num_threads(1)
@@ -177,7 +213,9 @@ def main():
               'parity': args.parity, 'native_parity': args.native_parity, 'init_model_sha256': sha256(args.init_model) if args.init_model else None, 'reference': ('corrected native-time RPC; legacy runtime.lua unchanged' if args.parity else 'native-time batch sampling'), 'difficulty': difficulty, 'dataset_sha256': sha256(args.dataset),
               'sampling': 'frozen-policy categorical with worker NumPy uniforms; Torch batches old values/logprobs',
               'sources': {p.name: sha256(p) for p in Path(__file__).parent.iterdir() if p.suffix in ('.py', '.lua')},
-              'iterations': []}
+              'checkpoint_every_requested': args.checkpoint_every,
+              'checkpoint_every_effective': effective_checkpoint_interval,
+              'checkpoints': [], 'last_checkpoint': None, 'iterations': []}
     atomic_json(output/'result.json', result)
     vector = None;started = time.monotonic()
     def stop(_signal, _frame):
@@ -225,6 +263,12 @@ def main():
                 model._update_current_progress_remaining(target, args.steps)
                 if not args.benchmark:
                     model.train()
+                    result['completed_update_steps'] = target
+                    result['optimizer_epochs_completed'] = model._n_updates-initial_updates
+                    if target % effective_checkpoint_interval == 0:
+                        checkpoint = save_model_checkpoint(model, output, target)
+                        result['checkpoints'].append(checkpoint)
+                        result['last_checkpoint'] = checkpoint
                 updating += time.monotonic()-update_start
                 row = {'steps': target, 'sampling_seconds': sampling, 'update_seconds': updating, 'max_logprob_error': error}
                 result['iterations'].append(row)
@@ -238,17 +282,22 @@ def main():
                 result['optimizer_epochs_completed'] = model._n_updates-initial_updates
                 if not result['parameters_changed']:
                     raise RuntimeError('PPO did not change any parameter')
-                model.save(output/'ppo-batch')
-                result['model_sha256'] = sha256(output/'ppo-batch.zip')
+                final_checkpoint = save_model_checkpoint(model, output, model.num_timesteps, name='ppo-batch.zip')
+                result['model_sha256'] = final_checkpoint['sha256']
+                result['final_checkpoint'] = final_checkpoint
             result['status'] = 'complete'
     except BaseException as error:
         result.update(status='invalid', error=f'{type(error).__name__}: {error}')
         raise
     finally:
         if vector is not None:
-            vector.close()
-            if vector.close_errors:
-                result.update(status='invalid', cleanup_errors=vector.close_errors)
+            try:
+                vector.close()
+                if vector.close_errors:
+                    result.update(status='invalid', cleanup_errors=vector.close_errors)
+            except BaseException as error:
+                result['status'] = 'invalid'
+                result.setdefault('cleanup_errors', []).append(f'{type(error).__name__}: {error}')
         result['wall_seconds'] = time.monotonic()-started
         atomic_json(output/'result.json', result)
         print(json.dumps(result, indent=2), flush=True)

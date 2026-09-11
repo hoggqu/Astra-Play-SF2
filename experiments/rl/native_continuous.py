@@ -18,6 +18,7 @@ ORIGINAL_STAGE = continuous.stage_policy
 def stage_native_policy(run, level, payload):
     ORIGINAL_STAGE(run, level, payload)
     runtime = run/'training/runtime'
+    (runtime/'rl_settlement.lua').write_bytes((HERE/'settlement.lua').read_bytes())
     (runtime/'rl_continuous_core.lua').write_bytes((HERE/'native_continuous_core.lua').read_bytes())
     path = runtime/'play.lua'
     source = path.read_text()

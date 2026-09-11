@@ -25,7 +25,7 @@ def source_paths():
         '__init__.py', 'native_campaign.py', 'campaign.py', 'batch_train.py',
         'batch_env.py', 'batch_runtime.lua', 'env.py', 'runtime.lua', 'dataset.py',
         'vector.py', 'export.py', 'nn.lua', 'actions.lua', 'continuous.py',
-        'continuous_core.lua', 'native_continuous.py', 'native_continuous_core.lua',
+        'continuous_core.lua', 'native_continuous.py', 'native_continuous_core.lua', 'settlement.lua',
     )
     production = ('__init__.py', 'config.py', 'runner.py', 'opening.py', 'transport.py')
     paths = {'experiments/rl/'+name: here/name for name in experiment}
@@ -49,7 +49,7 @@ def require_sources(paths, expected):
 
 
 def campaign(dataset, output, init_model=None, workers=8, cycles=5,
-             steps_per_cycle=102400, block=64, seed=42,
+             steps_per_cycle=102400, block=64, seed=42, verification_attempts=3,
              stage_timeout=3600, stage_runner=run_stage):
     if type(workers) is not int or workers not in range(1, 9):
         raise ValueError('workers must be 1..8')
@@ -57,6 +57,8 @@ def campaign(dataset, output, init_model=None, workers=8, cycles=5,
         raise ValueError('Cycle, step and timeout budgets must be positive integers')
     if steps_per_cycle % (workers*256) or block not in (1, 16, 32, 64, 128, 256):
         raise ValueError('Steps must be workers*256 multiples; block must divide 256')
+    if type(verification_attempts) is not int or verification_attempts not in range(1, 4):
+        raise ValueError('verification-attempts must be 1..3')
     dataset = Path(dataset).resolve()
     _, difficulty = load_dataset(dataset)
     if difficulty != 3:
@@ -75,7 +77,8 @@ def campaign(dataset, output, init_model=None, workers=8, cycles=5,
               'maximum_training_steps': cycles*steps_per_cycle, 'block': block,
               'selection': 'last model; cumulative optimizer/weights carried forward, no dev selection',
               'holdout_opened': False, 'native_timing_required': True,
-              'verification_attempts_per_cycle': 3, 'stage_timeout_seconds': stage_timeout,
+              'verification_attempts_per_cycle': verification_attempts,
+              'maximum_verification_attempts': cycles*verification_attempts, 'stage_timeout_seconds': stage_timeout,
               'dataset_sha256': sha256(dataset), 'initial_model_sha256': initial_hash,
               'frozen_v4_certification': False, 'cycles': [],
               'created_utc': datetime.now(timezone.utc).isoformat(),
@@ -135,19 +138,19 @@ def campaign(dataset, output, init_model=None, workers=8, cycles=5,
             # inference wholly inside Lua. No agent or Python decision pauses.
             code = stage(row, 'continuous', 'experiments.rl.native_continuous',
                          ['--model', model, '--output', verify_dir, '--difficulty', difficulty,
-                          '--attempts', 3, '--speed', 'fast'], folder)
+                          '--attempts', verification_attempts, '--speed', 'fast'], folder)
             verified = read_result(verify_dir/'result.json', 'astra.rl-continuous.v1')
             if verified.get('native_timing') is not True:
                 raise RuntimeError('Continuous run did not certify native-time action scheduling')
             attempts = verified.get('attempts', [])
             if verified.get('model_sha256') != row['model_sha256'] or verified.get('difficulty') != difficulty:
                 raise RuntimeError('Continuous model or difficulty mismatch')
-            if not 1 <= len(attempts) <= 3 or any(a.get('outcome') not in ('loss', 'rl_gameplay_clear') or not a.get('audit', {}).get('ok') for a in attempts):
+            if not 1 <= len(attempts) <= verification_attempts or any(a.get('outcome') not in ('loss', 'rl_gameplay_clear') or not a.get('audit', {}).get('ok') for a in attempts):
                 raise RuntimeError('Continuous attempt audit/outcome invalid')
             if any(a['outcome'] == 'rl_gameplay_clear' and (a.get('match_wins') != 11 or len(a.get('matches', [])) != 11) for a in attempts):
                 raise RuntimeError('Clear requires eleven audited native match wins')
             clears = sum(a['outcome'] == 'rl_gameplay_clear' for a in attempts)
-            if code != (0 if clears else 1) or (not clears and len(attempts) != 3):
+            if code != (0 if clears else 1) or (not clears and len(attempts) != verification_attempts):
                 raise RuntimeError('Continuous exit code or attempt budget mismatch')
             row.update(status='complete', stage='complete', clears=clears,
                        attempts=[{'id': a['id'], 'outcome': a['outcome'], 'match_wins': a.get('match_wins'),
@@ -184,6 +187,8 @@ def main():
     parser.add_argument('--steps-per-cycle', type=int, default=102400)
     parser.add_argument('--block', type=int, choices=(1, 16, 32, 64, 128, 256), default=64)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--verification-attempts', type=int, choices=range(1, 4), default=3,
+                        help='Natural coin attempts per frozen model; valid losses then advance to next training cycle')
     parser.add_argument('--stage-timeout', type=int, default=3600)
     args = parser.parse_args()
     def interrupted(_signal, _frame):

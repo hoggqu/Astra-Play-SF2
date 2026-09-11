@@ -41,6 +41,7 @@ class BatchRuntimeTests(unittest.TestCase):
                  add_machine_frame_notifier=function(fn) on_frame=fn end,
                  register_frame_done=function(fn) on_rpc=fn end}
             modules={}
+            modules['training/runtime/rl_settlement.lua']=function(c) return c end
             modules['training/runtime/rl_checkpoint.lua']={'/isolated/cp.sta'}
             modules['training/runtime/rl_batch_checkpoints.lua']={2}
             modules['training/runtime/status_io.lua']={publish=function(path,body) publish_python(path,body) end,
@@ -139,6 +140,30 @@ class BatchRuntimeTests(unittest.TestCase):
         self.request({'id': 1, 'op': 'reset', 'reset': {'checkpoint': 0, 'lead': 0}})
         self.tick();self.tick()
         self.assertIn('expected full-health Ken R1 opponent', self.reply(1)['error'])
+
+    def test_unknown_settlement_keeps_evidence_and_is_never_a_done_transition(self):
+        self.lua.execute('''
+            modules['training/runtime/play_core.lua'].new=function()
+                local c={frame=0,phase='fighting',rounds={},score={0,0}}
+                function c:tick(s)
+                    self.frame=self.frame+1
+                    self.round_stop=s;self.terminal_frame=1;self.phase='invalid'
+                    return {terminal={valid=false,reason='unresolved native result'}}
+                end
+                return c
+            end
+        ''')
+        self.reset()
+        self.request({'id':2,'op':'rollout','count':1,'actions':[0],
+                      'resets':[{'checkpoint':0,'lead':0}]})
+        self.tick()
+        self.assertIn('unresolved native result', self.reply(2)['error'])
+        self.assertNotIn('transitions', self.reply(2))
+        evidence=json.loads(self.published['training/rl-batch-unresolved-settlement.json'])
+        self.assertEqual(evidence['score'], [0,0])
+        self.assertEqual(evidence['current_state']['p2']['char'], 2)
+        self.assertEqual(len(evidence['trace']), 1)
+        self.assertEqual(self.lua.globals().loads, 1)
 
     def test_stochastic_uniform_sampling_returns_actual_logprob(self):
         self.reset()

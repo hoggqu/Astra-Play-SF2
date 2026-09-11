@@ -50,9 +50,10 @@ class NativeCampaignTests(unittest.TestCase):
             return 0
         model = Path(args[args.index('--model')+1])
         outcome = self.outcomes[min(self.train_calls-1, len(self.outcomes)-1)]
+        limit = int(args[args.index('--attempts')+1])
         attempts = [dict(id=f'l3-{i:03d}', outcome=outcome, match_wins=11 if outcome == 'rl_gameplay_clear' else 0,
                          matches=['training/attempts/l3-001/m01-blanka.json']*(11 if outcome == 'rl_gameplay_clear' else 1), audit={'ok': True})
-                    for i in range(1, 2 if outcome == 'rl_gameplay_clear' else 4)]
+                    for i in range(1, 2 if outcome == 'rl_gameplay_clear' else limit+1)]
         atomic_json(output/'result.json', dict(schema='astra.rl-continuous.v1', status='complete',
             difficulty=3, native_timing=True, model_sha256=sha256(model), attempts=attempts))
         return 0 if self.bad_code or outcome == 'rl_gameplay_clear' else 1
@@ -127,6 +128,22 @@ class NativeCampaignTests(unittest.TestCase):
         self.assertEqual(result['status'], 'complete')
         self.assertTrue(result['goal_achieved'])
         self.assertEqual(set(result['sources']), {'executed.py'})
+
+    def test_one_verification_attempt_advances_after_one_valid_loss(self):
+        result = self.run_campaign(verification_attempts=1)
+        self.assertTrue(result['goal_achieved'])
+        self.assertEqual(result['success_cycle'], 2)
+        self.assertEqual(result['verification_attempts_per_cycle'], 1)
+        self.assertEqual(result['maximum_verification_attempts'], 5)
+        self.assertEqual([len(c['attempts']) for c in result['cycles']], [1, 1])
+        for module, args in self.calls:
+            if module.endswith('.native_continuous'):
+                self.assertEqual(args[args.index('--attempts')+1], '1')
+
+    def test_invalid_verification_budget_never_starts_child(self):
+        with self.assertRaisesRegex(ValueError, 'verification-attempts'):
+            self.run_campaign(verification_attempts=0)
+        self.assertFalse(self.calls)
 
     def test_invalid_budgets_fail_before_launch(self):
         with self.assertRaises(ValueError):

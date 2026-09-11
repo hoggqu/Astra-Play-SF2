@@ -1,6 +1,7 @@
 -- Optional training-only batch sampler. One policy version per rollout request.
 local m=manager.machine
 local Core=assert(loadfile('training/runtime/play_core.lua'))()
+Core=assert(loadfile('training/runtime/rl_settlement.lua'))()(Core)
 local IO=assert(loadfile('training/runtime/status_io.lua'))()
 local Speed=assert(loadfile('training/runtime/speed.lua'))()
 local Actions=assert(loadfile('training/runtime/rl_actions.lua'))()
@@ -42,6 +43,9 @@ local pending,core,model,history,obs,state,loaded,episode_start
 local frames,episode,episode_return,episode_steps=0,0,0,0
 local current_checkpoint,current_lead
 local last_native_time
+-- Preserve unknown native settlements without guessing an outcome or emitting
+-- a transition. This is memory-only until an error, outside the action policy.
+local last_observed,settlement_trace
 local function stack(s,reset)
  local f=NN.features(s)
  if reset then history={f,f,f,f} else table.remove(history,1);history[#history+1]=f end
@@ -62,6 +66,13 @@ local function answer(extra)
 end
 local function fail(err)
  release();emu.pause()
+ if core and settlement_trace then
+  pcall(IO.publish,'training/rl-batch-unresolved-settlement.json',json({error=tostring(err),
+   episode=episode,checkpoint=current_checkpoint,lead=current_lead,frame=frames,
+   current_state=last_observed,round_stop=core.round_stop,terminal_frame=core.terminal_frame,
+   score=core.score,phase=core.phase,time_draw_latch=core.time_draw_latch,
+   time_draw_ko_seen=core.time_draw_ko_seen,trace=settlement_trace})..'\n')
+ end
  if state and episode_steps>0 then
   pcall(IO.append,'training/rl-batch-partials.jsonl',json({episode=episode,checkpoint=current_checkpoint,
    lead=current_lead,opponent=state.p2.char,steps=episode_steps,frames=frames,['return']=episode_return,
@@ -137,6 +148,7 @@ rl_batch_frame_subscription=emu.add_machine_frame_notifier(function()
    if not loaded then return end
    pending.refresh=pending.refresh-1;if pending.refresh>0 then return end
    state=snapshot();frames=0;episode=episode+1;episode_return=0;episode_steps=0
+   last_observed=state;settlement_trace=nil
    local opponent=assert(expected_opponents[current_checkpoint+1],'Missing checkpoint actor metadata')
    assert(Core.opening(state,opponent,{0,0}) and state.p1.char==4 and state.p2.char==opponent,
     'Batch reset did not restore expected full-health Ken R1 opponent')
@@ -146,7 +158,12 @@ rl_batch_frame_subscription=emu.add_machine_frame_notifier(function()
    continue_or_answer();return
   end
   frames=frames+1;pending.elapsed=pending.elapsed+1
-  local s=snapshot();local effects=core:tick(s)
+  local s=snapshot();last_observed=s
+  local effects=core:tick(s)
+  if core.round_stop then
+   settlement_trace=settlement_trace or {}
+   settlement_trace[#settlement_trace+1]={frame=frames,state=s}
+  end
   if pending.native_reference then
    if effects.input~=nil then input(effects.input) end
    pending.native_deferred=effects.rl_deferred_input

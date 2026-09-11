@@ -25,6 +25,7 @@ class BatchBridge(Bridge):
             runtime = self.base / 'runtime'
             (runtime / 'rl.lua').write_bytes((HERE / 'batch_runtime.lua').read_bytes())
             (runtime / 'rl_nn.lua').write_bytes((HERE / 'nn.lua').read_bytes())
+            (runtime / 'rl_settlement.lua').write_bytes((HERE / 'settlement.lua').read_bytes())
             (runtime / 'rl_native_core.lua').write_bytes((HERE / 'native_continuous_core.lua').read_bytes())
             manifest = read_json(self.base.parent / 'manifest.json')
             expected = [sample['opponent'] for sample in manifest['checkpoints']] or [manifest['opponent']]
@@ -45,6 +46,7 @@ class BatchEnv(MameEnv):
             self.manifest.update(schema='astra.rl-batch-env.v1', protocol='batch-v1')
             self.manifest['runtime_sha256'].update({'rl.lua': actual,
                 'rl_nn.lua': sha256(self.run / 'training/runtime/rl_nn.lua'),
+                'rl_settlement.lua': sha256(self.run / 'training/runtime/rl_settlement.lua'),
                 'rl_native_core.lua': sha256(self.run / 'training/runtime/rl_native_core.lua'),
                 'rl_batch_checkpoints.lua': sha256(self.run / 'training/runtime/rl_batch_checkpoints.lua')})
             atomic_json(self.run / 'manifest.json', self.manifest)

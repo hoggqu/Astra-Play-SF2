@@ -46,7 +46,7 @@ py -3 -m venv .local/rl-venv
 
 ```sh
 python -m experiments.rl.collect --difficulty 3 --opponents all --samples 4 --output .local/rl-data/normal-all-001 --max-seconds 1200
-python -m experiments.rl.native_campaign --dataset .local/rl-data/normal-all-001/manifest.json --output .local/rl-runs/normal-native-campaign-001 --init-model .local/rl-runs/train-001/best-dev.zip --workers 8 --cycles 10 --steps-per-cycle 102400 --block 64 --seed 101
+python -m experiments.rl.native_campaign --dataset .local/rl-data/normal-all-001/manifest.json --output .local/rl-runs/normal-native-campaign-001 --init-model .local/rl-runs/train-001/best-dev.zip --workers 8 --cycles 10 --steps-per-cycle 102400 --block 64 --verification-attempts 1 --seed 101
 ```
 
 `--init-model` 可省略以随机初始化；示例模型路径需要替换为实际已有模型。
@@ -55,7 +55,8 @@ python -m experiments.rl.native_campaign --dataset .local/rl-data/normal-all-001
 不因单次小样本开发评估回滚；开发迭代不打开 holdout。固定执行源码在每个
 阶段前后核验，新建无关实验文件不影响批次。
 
-每批结束固定模型、自然投币验证最多三次；成功完成 11 场对手比赛后自动停止，
+每批结束固定模型、自然投币验证；`--verification-attempts` 支持 1～3，默认 3。
+上例每批只验证一次，适合通关率仍低时减少重复验证耗时。成功完成 11 场对手比赛后自动停止，
 否则自动继续下一批，以上命令最多十批。所有败局与中断保留；控制异常立即停止。
 通关结果为独立的 `rl_gameplay_clear`，不混入冻结 V4 的认证或历史胜率。
 初步接口检查和计划见 [Normal 实验设计](PLAN_NORMAL.md)。仅一个开局的局部胜率
@@ -63,6 +64,11 @@ python -m experiments.rl.native_campaign --dataset .local/rl-data/normal-all-001
 
 两个 campaign 可使用不同 seed 和独立输出目录并行运行；必须把两个进程组的
 资源合计计入主机预算。每个 campaign 都不需要 Agent 按小局下指令。
+
+批量训练约每 20480 次已完成 PPO 更新的决策保存一份模型检查点，路径、步数、
+哈希记入训练结果的 `checkpoints` / `last_checkpoint`。若阶段异常，仍记录为
+无效；可用该检查点在**新的输出目录**明确指定 `--init-model` 续训。它恢复网络和
+优化器，不恢复模拟器局面或 RNG，也不代表失败阶段已经完成。
 
 只读统计可重复传入多个运行目录，输出每个模型的逐对手训练小局成绩、连续游玩
 小局成绩和整路线失败对手。运行中的尝试记为待定；Lua 与 Python 的同一小局不重复计数。

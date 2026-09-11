@@ -24,6 +24,7 @@ class NativeContinuousTests(unittest.TestCase):
             staged = run/'training/runtime'
             self.assertEqual(hashes['rl_continuous_core.lua'],sha256(HERE/'native_continuous_core.lua'))
             self.assertNotEqual(hashes['rl_continuous_core.lua'],sha256(HERE/'continuous_core.lua'))
+            self.assertEqual(hashes['rl_settlement.lua'],sha256(HERE/'settlement.lua'))
             for name in ('fighter.lua','play_core.lua','selection.json'):
                 self.assertEqual((staged/name).read_bytes(),(ASSETS/name).read_bytes())
             for source in staged.glob('*.lua'):
@@ -57,6 +58,7 @@ class NativeContinuousTests(unittest.TestCase):
         lua.globals().modules=lua.table()
         lua.globals().modules['training/runtime/play_core.lua']=lua.execute((ASSETS/'play_core.lua').read_text())
         lua.globals().modules['training/runtime/rl_actions.lua']=lua.execute((HERE/'actions.lua').read_text())
+        lua.globals().modules['training/runtime/rl_settlement.lua']=lua.execute((HERE/'settlement.lua').read_text())
         lua.execute('function loadfile(path) return function() return assert(modules[path]) end end')
         lua.globals().Core=lua.execute((HERE/'native_continuous_core.lua').read_text())
         lua.execute('''
