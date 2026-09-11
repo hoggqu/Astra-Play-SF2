@@ -184,6 +184,15 @@ class RuntimeBoundaryTests(unittest.TestCase):
         self.assertTrue(self.reply(1)["reset_confirmed"])
         self.assertEqual(self.lua.globals().core_count, 1)
 
+    def test_reset_selects_second_checkpoint_without_changing_baseline_flag(self):
+        self.lua.globals().modules['training/runtime/rl_checkpoint.lua'] = self.lua.table_from(['/first.sta', '/second.sta'])
+        self.lua.globals().enqueue(1, 'reset', 0, 3)
+        self.assertEqual(self.lua.globals().loaded_path, '/second.sta')
+        self.lua.globals().on_load()
+        self.advance(2)
+        self.assertTrue(self.reply(1)['reset_confirmed'])
+        self.assertTrue(self.lua.eval('core_options.choose == choose'))
+
     def test_invalid_native_result_is_an_error_not_a_loss(self):
         self.reset_baseline()
         self.lua.globals().invalid_at = 1

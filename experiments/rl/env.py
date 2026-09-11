@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 import subprocess
 import shutil
+import multiprocessing
+from multiprocessing.util import Finalize
+import signal
 import time
 
 import gymnasium as gym
@@ -59,6 +62,16 @@ class MameEnv(gym.Env):
         self.phase = 'train'
         self.baseline = False
         self.episodes = []
+        # SB3 workers are daemon processes. Register cleanup before preflight or
+        # MAME startup so a failed sibling cannot leave an orphan simulator.
+        if multiprocessing.current_process().daemon:
+            Finalize(None, self.close, exitpriority=10)
+            def terminate_worker(_signum, _frame):
+                try:
+                    self.close()
+                finally:
+                    raise SystemExit(1)
+            signal.signal(signal.SIGTERM, terminate_worker)
         self.difficulty = difficulty
         self.checkpoints = list(checkpoints or [])
         if not 3 <= difficulty <= 7:
@@ -233,20 +246,24 @@ class MameEnv(gym.Env):
             with (self.run/'partial-episodes.jsonl').open('a', encoding='utf-8') as stream:
                 stream.write(json.dumps({'phase': self.episode_phase, 'lead': self.lead,
                                          'steps': self.episode_steps, 'frames': self.last_frames,
-                                         'return': self.episode_return, 'reason': reason})+'\n')
+                                         'return': self.episode_return, 'checkpoint': self.checkpoint_index, 'reason': reason})+'\n')
             self.must_reset = True
 
     def close(self):
         if self.closed:
             return
         self.closed = True
-        self.record_partial('environment_closed')
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
+        try:
+            self.record_partial('environment_closed')
+        finally:
             try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=10)
-        if self.log is not None:
-            self.log.close()
+                if self.process is not None and self.process.poll() is None:
+                    self.process.terminate()
+                    try:
+                        self.process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        self.process.kill()
+                        self.process.wait(timeout=10)
+            finally:
+                if self.log is not None:
+                    self.log.close()

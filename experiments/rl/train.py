@@ -11,32 +11,13 @@ import numpy as np
 import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from .vector import ManagedVec
 
 from astra_play_sf2.config import atomic_json, load_config
 from astra_play_sf2.runner import sha256
 from .env import EVAL_LEADS, MameEnv
+from .dataset import load_dataset
 
-
-def load_dataset(path):
-    path = Path(path).resolve()
-    data = json.loads(path.read_text(encoding='utf-8'))
-    groups = {'train': [], 'dev': [], 'holdout': []}
-    seen = set()
-    for original in data['openings']:
-        sample = dict(original)
-        filename = (path.parent/sample['path']).resolve()
-        if not filename.is_relative_to(path.parent):
-            raise ValueError('Checkpoint outside dataset directory')
-        actual = sha256(filename)
-        if actual != sample['sha256'] or actual in seen:
-            raise ValueError('Checkpoint checksum mismatch or duplicate across splits')
-        seen.add(actual)
-        sample.update(path=str(filename), difficulty=data['difficulty'], opponent=data.get('opponent', 2))
-        groups[sample['split']].append(sample)
-    if not all(groups.values()):
-        raise ValueError('Need nonempty train, dev and holdout splits')
-    return groups, data['difficulty']
 
 
 def make_worker(config, folder, difficulty, samples, phase='train'):
@@ -93,7 +74,7 @@ def main():
     vector = dev = holdout = None
     started = time.monotonic()
     try:
-        vector = SubprocVecEnv([partial(make_worker, config, output/f'worker-{i:02d}', difficulty,
+        vector = ManagedVec([partial(make_worker, config, output/f'worker-{i:02d}', difficulty,
                                       groups['train'], 'benchmark' if args.benchmark else 'train')
                                for i in range(args.workers)], start_method='spawn')
         vector.seed(args.seed)
@@ -146,7 +127,14 @@ def main():
     finally:
         for env in (vector, dev, holdout):
             if env is not None:
-                env.close()
+                try:
+                    env.close()
+                    if getattr(env, 'close_errors', None):
+                        manifest['status'] = 'invalid'
+                        manifest.setdefault('cleanup_errors', []).extend(env.close_errors)
+                except BaseException as error:
+                    manifest['status'] = 'invalid'
+                    manifest.setdefault('cleanup_errors', []).append(f'{type(error).__name__}: {error}')
         manifest['wall_seconds'] = time.monotonic()-started
         atomic_json(output/'result.json', manifest)
         print(json.dumps(manifest, indent=2), flush=True)

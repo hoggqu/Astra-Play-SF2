@@ -30,6 +30,7 @@ class RLTests(unittest.TestCase):
             env.phase = 'trained'
             env.episode_phase = 'train'
             env.lead = 0
+            env.checkpoint_index = 0
             env.episode_steps = 5
             env.last_frames = 60
             env.episode_return = -.1
