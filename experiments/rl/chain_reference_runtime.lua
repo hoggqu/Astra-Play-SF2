@@ -30,7 +30,9 @@ local function snapshot()
  s.effective_difficulty=astra_difficulty.check(level).effective_difficulty
  return s
 end
+local held_input=''
 local function input(text)
+ held_input=text or ''
  release();for k in (text or ''):gmatch('%S+') do assert(k~='C' and k~='S' and keys[k]):set_value(1) end
 end
 local function hp(s,key) return math.max(0,math.min(144,s[key].hp)) end
@@ -38,8 +40,9 @@ local function reward(before,after,outcome)
  return .25*((hp(before,'p2')-hp(after,'p2'))-(hp(before,'p1')-hp(after,'p1')))/144
   + (outcome=='win' and 1 or outcome=='loss' and -1 or 0)
 end
-local pending,core,loaded,last_time,frames,opening,decisions,index
+local pending,core,loaded,last_time,frames,opening,decisions,index,diagnostic_state
 local function fail(err)
+ if pending then IO.publish('training/reference-failure.json',json({error=tostring(err),frame=frames,state=diagnostic_state,opening=opening,decisions=decisions,trace=pending.trace})..'\n') end
  release();emu.pause()
  local id=pending and pending.id or -1;pending=nil
  IO.publish(string.format('training/rl-batch-reply-%08d.json',id),json({id=id,error=tostring(err)})..'\n')
@@ -72,10 +75,10 @@ rl_batch_frame_subscription=emu.add_machine_frame_notifier(function()
    core=Core.new({mode='rl_chain_reference',opponent=opponent,choose=choose,timeout_guard=false,lead=0},opening)
    pending.resetting=false;pending.deferred=core:rl_prime(opening);return
   end
-  frames=frames+1;local s=snapshot();local effects=core:tick(s)
+  frames=frames+1;local s=snapshot();diagnostic_state=s;local consumed=held_input;local effects=core:tick(s)
   assert(not m.paused,'Reference paused during play')
   if effects.terminal and not effects.terminal.valid then error(effects.terminal.reason) end
-  pending.trace[#pending.trace+1]={frame=frames,state=s,phase=core.phase,round=core.round,events=effects.events}
+  pending.trace[#pending.trace+1]={frame=frames,state=s,phase=core.phase,round=core.round,events=effects.events,consumed_input=consumed}
   if core.phase=='complete' then
    assert(frames==pending.frames,'Reference match ended at a different frame')
    assert(index==#pending.actions+1,'Reference did not consume complete action plan')

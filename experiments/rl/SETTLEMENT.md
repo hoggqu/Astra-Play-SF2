@@ -10,7 +10,7 @@ could not classify. Both original runs remain invalid; repaired replays use
 new source identities and new output directories.
 
 The first adapter version handled these two specific cases; its implementation
-is retained in Git history. The current default uses version 3 below.
+is retained in Git history. The current default uses version 4 below.
 
 - **Ken / Chun-Li, zero-health time draw:** both fighters were alive at zero HP
   when time expired. Ken entered the time-loss pose before a late spinning kick
@@ -114,8 +114,38 @@ initial training checkpoint load and no subsequent load or pause through frame
 `test_settlement_v3.py` covers rejected evidence and separated terminal reward.
 The portable `draw_parity`, `draw_block_probe`, and `draw_continuation` diagnostic
 modules require captured private action plans and explicitly staged diagnostic
-runtimes; they are not normal verification entry points. A paused checkpoint
-reset and a live in-batch reset have different first-input phases: reproducing
-the captured draw required the live reset phase. Ordinary 64-decision batch
-boundaries were ruled out as the cause. Input-start normalization remains a
-separate experiment; this settlement fix does not change action timing.
+runtimes; they are not normal verification entry points. In that historical
+sampler, paused checkpoint reset and live in-batch reset had different first-input
+phases: reproducing the captured draw required the live reset phase. The tested
+64-decision boundaries did not cause that particular divergence. A later trace
+did expose an independent resume-time input-latch defect; the corrected chain
+sampler and its bounded validation are described in
+[NATIVE_TIMING](NATIVE_TIMING.md#batch-resume-input-latch-correction).
+
+## Version 4: confirm a non-time double KO
+
+A Blanka training round stopped with both live HP values at the native KO
+sentinel `-1`, while time remained. Both displayed HP values later reached `-1`;
+the game's next round opened with the same actors and unchanged score. Version
+3 rejected the retained pose before it could recognize that draw.
+
+Version 4 adds this evidence path without changing the existing time protocols:
+
+1. Both stop-state and subsequently observed live HP must be exactly `-1`.
+   Timer and score remain unchanged, and integer displayed HP must fall
+   monotonically within `-1..144`.
+2. Retain a grounded snapshot with both displayed HP values at `-1`, at least
+   360 native frames after the stop. Actor initialization is accepted only
+   after this mature evidence exists.
+3. Confirm a draw only from the actual full-HP, timer-99 next-round opening
+   with the same actors and score. Keep the mature previous-round snapshot
+   separate for terminal rewards; never revive an invalid controller.
+
+The original failure trace passes offline replay with this adapter and remains
+an invalid historical run. A fresh 204800-decision training replay encountered
+the same double KO and continued through its fourth round. That replay still
+used the old batch input timing, so it certifies the observed settlement and
+continuation, not sampling/deployment equivalence. The subsequent timing fix
+has separate full-match, real-PPO and natural-coin evidence. None of these
+checks is a formal gameplay clear. `test_settlement_v4.py` covers chronology,
+HP sentinel, score, initialization and premature-confirmation counterexamples.

@@ -111,7 +111,23 @@ class RoundChainTests(BatchRuntimeTests):
         self.assertEqual(result['chain_metrics']['loads'],1)
 
     def test_multiple_actions_run_without_intermediate_file_rpc(self):
-        return super().test_multiple_actions_run_without_intermediate_file_rpc()
+        self.reset()
+        self.request({'id':2,'op':'rollout','count':2,'actions':[12,13],
+                      'resets':[{'checkpoint':0,'lead':0}]*2})
+        samples=[];g=self.lua.globals()
+        self.assertEqual(list(g.active.keys()),[])  # Paused timestamp stays neutral.
+        for _ in range(24):
+            self.assertFalse(g.manager.machine.paused)
+            # MAME frame_done precedes ioport sampling and machine notification.
+            g.native_time=g.native_time+1;g.on_rpc()
+            samples.append(' '.join(sorted(g.active.keys())))
+            g.on_frame()
+        result=self.reply(2)
+        self.assertEqual([row['frames'] for row in result['transitions']],[12,24])
+        self.assertEqual(samples[:12],['D']*3+['D R']*3+['LP R']*2+['']*4)
+        self.assertEqual(samples[12:],['R']*2+['D']*2+['D LP R']*2+['']*6)
+        self.assertEqual(g.pauses,2)
+        self.assertEqual(result['partial_episode']['steps'],2)
 
 # Only inherit fixture/cadence methods useful to the new protocol.
 for _name in list(BatchRuntimeTests.__dict__):

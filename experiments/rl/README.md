@@ -40,8 +40,11 @@ py -3 -m venv .local/rl-venv
 ### 普通难度全对手自动训练与通关实验
 
 现在支持一套权重混合训练全部 11 名对手，以及 Lua 中每 12 个原生帧执行一次神经网络
-推理的[连续游玩](CONTINUOUS.md)。新实验优先使用[原生时间版本](NATIVE_TIMING.md)，
-旧暂停 RPC 保留供历史复现。战斗不调用 AI Agent，也不在中途暂停向 Python
+推理的[连续游玩](CONTINUOUS.md)。新的训练优先使用
+[round-chain 派生包](ROUND_CHAIN_DESIGN.md)，它已修正暂停恢复时的输入提前锁存。
+[原生时间说明](NATIVE_TIMING.md) 区分这次修正和早期有限样本的 parity；
+下面的 R1-only `native_campaign` 命令及旧暂停 RPC 保留作历史对照，
+它们没有获得新的 chain 时序认证。战斗不调用 AI Agent，也不在中途暂停向 Python
 请求动作。选择角色、奖励关和地图过场仍复用固定脚本；实际交战没有 V4 回退。
 
 原生结算采用[证据协议](SETTLEMENT.md)，包括自然进入下一小局才确认的特殊

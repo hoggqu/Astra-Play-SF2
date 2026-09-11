@@ -70,7 +70,8 @@ local function fail(err)
   pcall(IO.publish,'training/rl-batch-unresolved-settlement.json',json({error=tostring(err),
    episode=episode,checkpoint=current_checkpoint,lead=current_lead,frame=frames,
    current_state=last_observed,round_stop=core.round_stop,terminal_frame=core.terminal_frame,
-   score=core.score,phase=core.phase,trace=settlement_trace})..'\n')
+   score=core.score,phase=core.phase,trace=settlement_trace,
+   opening=match_opening,match_actions=match_actions,rounds=core.rounds})..'\n')
  end
  if state and episode_steps>0 then
   local row=partial();row.reason='controller_error';row.error=tostring(err)
@@ -214,7 +215,9 @@ rl_batch_frame_subscription=emu.add_machine_frame_notifier(function()
 end)
 rl_batch_rpc_subscription=emu.register_frame_done(function()
  if pending then
-  if pending.deferred~=nil then local text=pending.deferred;pending.deferred=nil;input(text) end
+  if pending.deferred~=nil and (not pending.deferred_after or m.time:as_double()>pending.deferred_after) then
+   local text=pending.deferred;pending.deferred=nil;pending.deferred_after=nil;input(text)
+  end
   return
  end
  local f=io.open('training/rl-batch-request.lua','rb');if not f then return end
@@ -233,7 +236,8 @@ rl_batch_rpc_subscription=emu.register_frame_done(function()
    if pending.op=='reset_rollout' then reset(pending.reset)
    else
     assert(pending.op=='rollout' and core and core.phase=='fighting' and not active_action)
-    start_action();local text=pending.deferred;pending.deferred=nil;input(text)
+    start_action()
+    pending.deferred_after=m.time:as_double()
    end
   end
   emu.unpause()
