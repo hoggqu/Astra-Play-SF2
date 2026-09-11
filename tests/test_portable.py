@@ -328,6 +328,17 @@ class RuntimeTests(TemporaryCase):
         with runner.session_lock(self.root):
             self.assertTrue((self.root / "verify.lock").exists())
 
+    def test_session_lock_metadata_failure_closes_handle_before_cleanup(self):
+        with patch.object(runner.platform, "node", side_effect=RuntimeError("host lookup failed")), \
+             patch.object(runner.os, "close", wraps=os.close) as close:
+            with self.assertRaisesRegex(RuntimeError, "host lookup failed"):
+                with runner.session_lock(self.root):
+                    self.fail("lock initialization should fail")
+            close.assert_called_once()
+        self.assertFalse((self.root / "verify.lock").exists())
+        with runner.session_lock(self.root):
+            self.assertTrue((self.root / "verify.lock").exists())
+
     def test_startup_failure_seals_isolated_run_and_terminates_only_its_process(self):
         value = {"mame": str(self.root / "fake mame"), "rom_dir": str(self.root / "roms"),
                  "data_dir": str(self.root / "data")}
@@ -345,6 +356,7 @@ class RuntimeTests(TemporaryCase):
             return process
         with patch.object(runner, "doctor", return_value={"ok": True}), \
              patch.object(runner.platform, "platform", return_value="fixture-platform"), \
+             patch.object(runner.platform, "node", return_value="fixture-host"), \
              patch.object(runner.subprocess, "Popen", side_effect=launch) as popen, \
              patch.object(runner, "Bridge", return_value=bridge), \
              patch("astra_play_sf2.evidence.audit_run", return_value={"ok": False, "errors": ["fixture failure"]}), \
@@ -376,6 +388,7 @@ class RuntimeTests(TemporaryCase):
             save()
         with patch.object(runner, "doctor", return_value={"ok": True}), \
              patch.object(runner.platform, "platform", return_value="fixture-platform"), \
+             patch.object(runner.platform, "node", return_value="fixture-host"), \
              patch.object(runner.subprocess, "Popen", return_value=process), \
              patch.object(runner, "Bridge", return_value=bridge), \
              patch.object(runner, "_attempt", side_effect=attempt), \
@@ -399,6 +412,7 @@ class RuntimeTests(TemporaryCase):
         bridge.send.return_value = {"difficulty_bits": 4}
         with patch.object(runner, "doctor", return_value={"ok": True}), \
              patch.object(runner.platform, "platform", return_value="fixture-platform"), \
+             patch.object(runner.platform, "node", return_value="fixture-host"), \
              patch.object(runner.subprocess, "Popen", return_value=process) as launch, \
              patch.object(runner, "Bridge", return_value=bridge), \
              patch.object(runner, "_attempt") as attempt, \

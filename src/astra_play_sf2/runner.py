@@ -36,8 +36,11 @@ def session_lock(data):
     except FileExistsError:
         raise RuntimeError(f"Session lock exists: {path}. Inspect the recorded PID; do not start a second controller.") from None
     try:
-        os.write(fd, json.dumps({"pid": os.getpid(), "host": platform.node()}).encode())
-        os.close(fd)
+        try:
+            os.write(fd, json.dumps({"pid": os.getpid(), "host": platform.node()}).encode())
+        finally:
+            # Windows cannot remove an open lock if metadata collection/write fails.
+            os.close(fd)
         yield
     finally:
         path.unlink(missing_ok=True)
