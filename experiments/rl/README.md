@@ -54,6 +54,11 @@ py -3 -m venv .local/rl-venv
 更新检查，再运行自动训练与自然投币验证。候选成绩与原 15 动作模型分开统计，
 目前仍以取得一次真正的普通难度通关为实验目标。
 
+后续对照包括只改变训练对手概率的[固定加权采样](WEIGHTED_SAMPLING.md)，
+以及固定权重的 [16 动作随机策略验证](STOCHASTIC16.md)。
+[飞行道具观测调查](PROJECTILE_OBSERVATION.md)记录了只读实机证据和字段限制，
+尚未加入当前模型输入。
+
 ```sh
 python -m experiments.rl.collect --difficulty 3 --opponents all --samples 4 --output .local/rl-data/normal-all-001 --max-seconds 1200
 python -m experiments.rl.native_campaign --dataset .local/rl-data/normal-all-001/manifest.json --output .local/rl-runs/normal-native-campaign-001 --init-model .local/rl-runs/train-001/best-dev.zip --workers 8 --cycles 10 --steps-per-cycle 102400 --block 64 --verification-attempts 1 --seed 101
