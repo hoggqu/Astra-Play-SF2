@@ -41,6 +41,50 @@ def fixture(root, native=False):
 
 
 class ReportTests(unittest.TestCase):
+    def test_weighted_sampling_lineage_survives_campaign_and_standalone_reports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            train = campaign/'cycle-001/train'
+            metadata = {'identity': 'fixed_opponent_probabilities_v1',
+                        'configuration': {'schema': 'astra.rl-fixed-opponent-sampling.v1',
+                            'probabilities': {str(op): 1/11 for op in (0,1,2,3,5,6,7,8,9,10,11)},
+                            'formula': {'kind': 'uniform_floor_failure_squared', 'alpha': .4},
+                            'statistics_source': {'kind': 'training_only', 'sha256': 'stats-hash',
+                                                  'round_scope': ['R1', 'R2', 'R3']}},
+                        'configuration_file_sha256': 'config-hash', 'input_weights_sha256': 'weights-hash',
+                        'build_manifest_sha256': 'build-hash', 'parent_chain_build_sha256': 'parent-hash'}
+            originals = {}
+            for path in (campaign/'result.json', train/'result.json'):
+                result = json.loads(path.read_text())
+                result['opponent_sampling'] = metadata
+                write(path, result)
+                originals[path] = path.read_bytes()
+            run = summarize([campaign])['campaigns'][0]
+            self.assertEqual(run['opponent_sampling'], metadata)
+            self.assertEqual(run['cycles'][0]['training']['opponent_sampling'], metadata)
+            standalone = summarize(training_paths=[train])
+            self.assertEqual(standalone['standalone'][0]['summary']['opponent_sampling'], metadata)
+            for report in (summarize([campaign]), standalone):
+                rendered = render_markdown(report)
+                for text in ('fixed_opponent_probabilities_v1', 'uniform_floor_failure_squared',
+                             'stats-hash', 'config-hash', 'weights-hash', 'build-hash', 'parent-hash'):
+                    self.assertIn(text, rendered)
+            self.assertEqual(originals, {path: path.read_bytes() for path in originals})
+            self.assertEqual(run['aggregate']['training_rounds']['2']['win'], 1)
+
+    def test_sampling_metadata_is_never_inherited_or_invented_for_old_stages(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            result = json.loads((campaign/'result.json').read_text())
+            result['opponent_sampling'] = {'identity': 'parent-declaration-only'}
+            write(campaign/'result.json', result)
+            report = summarize([campaign])
+            self.assertIsNone(report['campaigns'][0]['cycles'][0]['training']['opponent_sampling'])
+            self.assertIn('不推断为均匀采样', render_markdown(report))
+            del result['opponent_sampling']
+            write(campaign/'result.json', result)
+            self.assertIsNone(summarize([campaign])['campaigns'][0]['opponent_sampling'])
+
     def test_round_chain_training_layers_are_subsets_not_additional_rounds(self):
         with tempfile.TemporaryDirectory() as folder:
             campaign = fixture(Path(folder), native=True)

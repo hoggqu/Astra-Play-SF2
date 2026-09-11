@@ -140,6 +140,7 @@ def training_summary(folder, issues):
                                'error': 'Invalid training round index; retained only in unindexed and total counts'})
     return {**action_identity(result), 'status': result.get('status', 'not_started'), 'schema': result.get('schema'),
             'round_chain': result.get('round_chain'), 'training_protocol': result.get('training_protocol'),
+            'opponent_sampling': result.get('opponent_sampling'),
             'difficulty': result.get('difficulty'), 'seed': result.get('seed'),
             'dataset_sha256': result.get('dataset_sha256'), 'result_sha256': digest,
             'model_sha256': result.get('model_sha256'), 'init_model_sha256': result.get('init_model_sha256'),
@@ -253,6 +254,7 @@ def summarize_campaign(path):
         raise ValueError(f'Unsupported/missing campaign schema: {path}')
     report = {**action_identity(result), 'path': str(path), 'name': path.name, 'schema': result['schema'], 'kind': SCHEMAS[result['schema']],
               'round_chain': result.get('round_chain'), 'training_protocol': result.get('training_protocol'),
+              'opponent_sampling': result.get('opponent_sampling'),
               'result_sha256': digest, 'status': result.get('status'), 'error': result.get('error'),
               'difficulty': result.get('difficulty'), 'seed': result.get('seed'),
               'dataset_sha256': result.get('dataset_sha256'), 'initial_model_sha256': result.get('initial_model_sha256'),
@@ -300,6 +302,14 @@ def summarize_campaign(path):
     return report
 
 
+def sampling_markdown(summary):
+    metadata = summary.get('opponent_sampling')
+    if metadata is None:
+        return ['对手采样：未声明；不推断为均匀采样。', '']
+    return ['对手采样元数据（运行记录原样保留，未重新验证）：', '',
+            '```json', json.dumps(metadata, ensure_ascii=False, indent=2), '```', '']
+
+
 def training_round_markdown(summary):
     lines = [f"训练协议：{summary.get('training_protocol') or '未声明'}；round_chain：{summary.get('round_chain')}。", '',
              '以下为完整训练小局的轮次分层，已包含在训练总数中，不另行累加；旧记录不推断轮次。', '',
@@ -311,7 +321,7 @@ def training_round_markdown(summary):
         for opponent in sorted(table, key=int):
             values = '/'.join(str(table[opponent][key]) for key in OUTCOMES)
             lines.append(f"| {label} | {NAMES[int(opponent)]} | {values} |")
-    return lines+['']
+    return sampling_markdown(summary)+lines+['']
 
 
 def render_markdown(report):
@@ -323,6 +333,7 @@ def render_markdown(report):
                   f"动作族：{run['action_schema_family']}；接口：{run.get('action_interface') or '未声明'}；动作数：{run.get('actions')}。",
                   f"运行声明训练协议：{run.get('training_protocol') or '未声明'}；round_chain：{run.get('round_chain')}。",
                   f"路径：`{run['path']}`", f"结果快照 SHA-256：`{run['result_sha256']}`", '']
+        lines += sampling_markdown(run)
         totals = run['aggregate']
         lines += [f"全路线结果：{totals['attempt_counts'].get('rl_gameplay_clear', 0)} 通关 / {totals['attempt_counts'].get('loss', 0)} 失败 / {totals['attempt_counts'].get('invalid', 0)} 无效 / {totals['attempt_counts'].get('pending', 0)} 待定；失败对手：{json.dumps(totals['failed_opponents'], ensure_ascii=False)}。", '']
         if run.get('error'):
