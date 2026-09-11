@@ -12,6 +12,8 @@ import threading
 import time
 import unittest
 
+from astra_play_sf2.transport import read_json
+
 try:
     from lupa.lua54 import LuaError, LuaRuntime
 except ImportError:
@@ -134,18 +136,18 @@ class StatusIOTests(unittest.TestCase):
                 reader_ready.set()
                 chunks = []
                 deadline = time.monotonic() + 20
-                missing_reads = 0
+                pending_reads = 0
                 while not done.is_set():
                     self.assertLess(time.monotonic(), deadline, "Lua writer stalled")
                     chunks.append(held.read())
-                    try:
-                        current = terminal.read_bytes()
-                    except FileNotFoundError:
-                        missing_reads += 1
+                    # Windows may briefly deny opening the destination while
+                    # rename is in progress. Use the actual production reader:
+                    # missing/sharing-denied files remain pending and are polled.
+                    current = read_json(terminal)
+                    if current is None:
+                        pending_reads += 1
                     else:
-                        # Every visible terminal must already be the full JSON.
-                        self.assertEqual(json.loads(current), payload)
-                        self.assertEqual(current, body.encode())
+                        self.assertEqual(current, payload)
                         observations.append(current)
                     if halfway.is_set() and not resume.is_set():
                         self.assertFalse(terminal.exists(), "Terminal appeared during progress")
@@ -155,10 +157,13 @@ class StatusIOTests(unittest.TestCase):
                         resume.set()
                     time.sleep(0.0005)
                 chunks.append(held.read())
-                self.assertGreater(missing_reads, 0, "Reader never polled before terminal publication")
+                self.assertGreater(pending_reads, 0, "Reader never observed a pending terminal")
                 if errors:
                     raise errors[0]
                 for _ in range(20):
+                    # With publish finished, verify exact bytes as well as the
+                    # production reader's parsed value. The separate half-write
+                    # test deterministically checks pre-publication visibility.
                     current = terminal.read_bytes()
                     self.assertEqual(json.loads(current), payload)
                     self.assertEqual(current, body.encode())
@@ -185,8 +190,9 @@ class StatusIOTests(unittest.TestCase):
             assert(os.rename(path..'.tmp',path))
         end''')
         with target.open("rb") as held:
-            with self.assertRaises(LuaError):
+            with self.assertRaisesRegex(LuaError, 'Permission denied') as failure:
                 old_publish(str(target), '{"frame":2}\n')
+            print('Reproduced old Windows publication error: '+str(failure.exception).splitlines()[0], flush=True)
             self.assertEqual(held.read(), b'{"frame":1}\n')
             self.assertEqual(target.read_bytes(), b'{"frame":1}\n')
         # Prove the failure was the held reader, not the old Lua syntax/path.

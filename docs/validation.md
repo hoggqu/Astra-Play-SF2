@@ -1,5 +1,30 @@
 # Validation history and portability
 
+## Windows status publication — 0.1.3, 2026-09-11
+
+The [status I/O change](windows-status-io.md) adds real Lua 5.4 file tests and
+a mandatory Windows job in addition to the existing six-platform/version matrix.
+The initial Windows run `34578854723` reproduced the old held-reader deletion
+failure and passed terminal publication, no-overwrite and partial-write checks.
+Its concurrent test used a raw Python read and failed on a transient read-side
+sharing denial during rename. The revised test uses the actual CLI reader's
+existing bounded polling, while still strictly checking completed file bytes.
+The failed test run is retained; it is not counted as a passing run.
+
+Local macOS 26.5.2 arm64 / Python 3.12.14 checks: 69 tests discovered, 68 passed,
+one Windows-only reproduction explicitly skipped; built/installed wheel version
+and runtime staging passed outside the checkout. The test-only Lua runtime was
+Lupa 2.8, explicitly using its Lua 5.4 module.
+
+Native MAME 0.288, World 910522 smoke `20260911T081919Z-f8aab2e1`: Hardest,
+one fast attempt, first opponent Blanka, **1/1 audited gameplay clear**, round
+W/L/D **22/0/1**. The run used the passive local preview captured in runtime
+hashes. Frozen V4 fighter/Core/selection were unchanged. All five images were
+inspected; the ending capture missed the wedding, so visual approval was
+rejected even though the eleven native match wins and file audit passed.
+This macOS gameplay run is separate from Windows file-I/O validation; no Windows
+MAME full-game test or new win-rate guarantee is claimed.
+
 ## Native entry readiness — 0.1.2, 2026-09-11
 
 The [entry readiness change](entry-readiness.md) replaces fixed 9000-frame idle
