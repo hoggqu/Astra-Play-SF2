@@ -1,0 +1,16 @@
+# Private legacy workspace: never distribute ROMs, states or training evidence.
+/MAME/
+/skills/
+/.venv/
+/dist/
+/build/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.DS_Store
+/config.json
+/.local-validation/
+/runs/
+*.zip
+*.7z
+*.sta

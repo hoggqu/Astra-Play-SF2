@@ -1,0 +1,5 @@
+* text=auto eol=lf
+# These three files are the byte-identical frozen policy inputs.
+src/astra_play_sf2/assets/fighter.lua -text
+src/astra_play_sf2/assets/play_core.lua -text
+src/astra_play_sf2/assets/selection.json -text

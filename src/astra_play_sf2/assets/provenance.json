@@ -1,0 +1,48 @@
+{
+  "policy": "V4",
+  "original_snapshot_sha256": "e8061e601bc28ca17805521f584f0705c21e0045228ecc47daf87b19683493a5",
+  "mame_version": "0.288",
+  "rom": "sf2",
+  "description": "Street Fighter II: The World Warrior (World 910522)",
+  "files": {
+    "fighter.lua": {
+      "origin": "coin22-v4-l7/fighter.lua",
+      "sha256": "80e3a83c3db48c14825ec39aea8248440fed9432cd5d476f7d4b9d23db4c6a99",
+      "unchanged": true
+    },
+    "play_core.lua": {
+      "origin": "coin22-v4-l7/play_core.lua",
+      "sha256": "28153fcf787baba6fe3c7636739d4ffc608302ddba58ac1fc4ec08e9285909e7",
+      "unchanged": true
+    },
+    "selection.json": {
+      "origin": "coin22-v4-l7/selection.json",
+      "sha256": "cd2d6c8462f27e8569afdafde94491ed33b1ea988b64aef05b313251ec6042e4",
+      "unchanged": true
+    },
+    "control.lua": {
+      "origin": "control.lua",
+      "original_sha256": "62aeb355a8de58b684c26dfa02e00fdaa97c40f38f31137b28435ded6b528432",
+      "sha256": "ce5948cd70d003b43766ab1b461e9c75b8e28a4dfc22610f6f1a330b9cf16e43",
+      "unchanged": false
+    },
+    "bridge.lua": {
+      "origin": "bridge.lua",
+      "original_sha256": "f27a3f88b0965eb28cd0111e1c9b992ee4f27cf3c6a474c7ad4285103a53dcd4",
+      "sha256": "3962e37a1dffeab34c0a9fe41c2652bd02adebb15c433dd94e7dc97f4f5b4931",
+      "unchanged": false
+    },
+    "observe.lua": {
+      "origin": "observe.lua",
+      "original_sha256": "ade9cc1fedcdd5891ad2da660d1bdbaf36e7f75629c5e3a499e6ea8b09d1d587",
+      "sha256": "ade9cc1fedcdd5891ad2da660d1bdbaf36e7f75629c5e3a499e6ea8b09d1d587",
+      "unchanged": false
+    },
+    "play.lua": {
+      "origin": "coin22-v4-l7/play.lua",
+      "original_sha256": "e418df9177fca701d30e215fff17dfe39dae3f1462f54ae06159353edaac5274",
+      "sha256": "58ee9e95a45899cc22fea7f65645ce93e69511025a2ef0787dd7789dc149b6bf",
+      "unchanged": false
+    }
+  }
+}
