@@ -171,3 +171,24 @@ class ChainBuilderTests(unittest.TestCase):
                 sys.path.remove(str(root/'chain'))
                 for name in list(sys.modules):
                     if name==PACKAGE or name.startswith(PACKAGE+'.'):sys.modules.pop(name)
+
+
+    def test_standard_actions16_build_freezes_installed_production_without_src(self):
+        import astra_play_sf2
+        from .actions16_builder import build as build16
+        from .round_chain_trial import freeze_production
+        from astra_play_sf2.runner import sha256
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);build16(root/'sixteen')
+            self.assertFalse((root/'sixteen'/'src').exists())
+            source=root/'sixteen'/'astra_sf2_rl16'
+            build(root/'chain',source)
+            record=freeze_production(source,root/'chain')
+            installed=Path(astra_play_sf2.__file__).resolve().parent
+            self.assertEqual(record['origin'],'installed_package')
+            self.assertEqual(record['source_package'],str(installed))
+            for name,digest in record['files_sha256'].items():
+                self.assertEqual(sha256(root/'chain'/'src'/'astra_play_sf2'/name),digest)
+            self.assertIn('assets/play_core.lua',record['files_sha256'])
+            self.assertEqual(record['files_sha256']['assets/play_core.lua'],sha256(installed/'assets'/'play_core.lua'))
+            self.assertTrue((root/'chain'/'production-source.json').is_file())

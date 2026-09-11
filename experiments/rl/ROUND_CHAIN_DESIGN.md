@@ -198,3 +198,10 @@ loads、natural_rounds、各阶段原生帧数、matches、逐小局 round/score
 后续小局。新权重随后自然投币验证一轮：Blanka 2:0、Guile 2:0、Honda
 0:2，为有效失败；native 时序及 chain/16 动作接口审计全部通过。该小试
 验证了训练到独立部署的路径，没有证明通关能力或收益优于 R1 训练。
+
+`round_chain_trial` 不要求 actions16 构建目录另有 `src/`。它优先复用父包
+已经冻结的 `src/astra_play_sf2`；没有时解析当前 Python 环境中实际安装的
+`astra_play_sf2`，连同 assets 冻结到试验目录。也可用
+`--production-source /path/to/astra_play_sf2` 显式指定包目录。来源和逐文件
+SHA 保存在 `production-source.json`，并由 trial 结果引用；chain、R1 对照
+和 native 验证统一使用这份生产依赖快照。
