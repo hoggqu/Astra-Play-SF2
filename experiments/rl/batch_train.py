@@ -3,6 +3,8 @@ import argparse
 from functools import partial
 import hashlib
 import json
+import math
+from numbers import Integral, Real
 import os
 import uuid
 from pathlib import Path
@@ -22,6 +24,33 @@ from astra_play_sf2.transport import Bridge
 from .dataset import load_dataset
 from .env import MameEnv
 from .vector import ManagedVec
+
+
+def ppo_update_metrics(model):
+    """Snapshot SB3's just-completed update; old ZIPs/results cannot recover these.
+
+    Entropy is the negative of SB3's minibatch-averaged entropy loss, not a new
+    measurement of the final policy. Missing/nonfinite values stay explicit null.
+    """
+    values, unavailable = {}, {}
+    recorded = model.logger.name_to_value
+    for name in ('entropy_loss', 'approx_kl', 'clip_fraction', 'value_loss',
+                 'explained_variance', 'policy_gradient_loss', 'learning_rate', 'n_updates'):
+        value = recorded.get('train/'+name)
+        if value is None:
+            unavailable[name] = 'missing'
+        elif isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+            unavailable[name] = 'not_a_real_scalar'
+        elif not math.isfinite(float(value)):
+            unavailable[name] = 'nonfinite'
+        else:
+            value = int(value) if isinstance(value, Integral) else float(value)
+        values[name] = None if name in unavailable else value
+    values['policy_entropy'] = -values['entropy_loss'] if values['entropy_loss'] is not None else None
+    if values['policy_entropy'] is None:
+        unavailable['policy_entropy'] = unavailable['entropy_loss']
+    values['unavailable'] = unavailable
+    return values
 
 
 def checkpoint_interval(requested, quantum):
@@ -261,8 +290,10 @@ def main():
                 error = fill_buffer(model, gathered)
                 model.num_timesteps = target
                 model._update_current_progress_remaining(target, args.steps)
+                update_metrics = None
                 if not args.benchmark:
                     model.train()
+                    update_metrics = ppo_update_metrics(model)
                     result['completed_update_steps'] = target
                     result['optimizer_epochs_completed'] = model._n_updates-initial_updates
                     if target % effective_checkpoint_interval == 0:
@@ -271,6 +302,8 @@ def main():
                         result['last_checkpoint'] = checkpoint
                 updating += time.monotonic()-update_start
                 row = {'steps': target, 'sampling_seconds': sampling, 'update_seconds': updating, 'max_logprob_error': error}
+                if update_metrics is not None:
+                    row['ppo'] = update_metrics
                 result['iterations'].append(row)
                 result.update(actual_steps=target, sampling_seconds=sampling, update_seconds=updating,
                               decisions_per_sampling_second=target/sampling,
