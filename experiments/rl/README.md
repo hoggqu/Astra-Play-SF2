@@ -34,7 +34,72 @@ py -3 -m venv .local/rl-venv
 附加第二个发送者。正式验证监听器只在实验实例完成自然开局后解除，随后进入
 训练专用 RPC；不会修改发行版文件或其他正在运行的模拟器。
 
-## 本轮实验设计
+## 扩大训练：多个开局、并行采样、定期评估
+
+先用冻结 V4 走自然投币流程，采集六个 Blanka R1，按采集顺序固定分为
+4 个训练、1 个阶段评估（dev）、1 个最终检查（holdout）。这是训练采集，允许
+保存；不读档、不重置来挑选路线。遇到败局会记录，并在自然结束后重新投币。
+不同存档哈希仍不保证统计独立，dev/holdout 只有一个开局的限制要保留。
+
+```sh
+python -m experiments.rl.collect --output .local/rl-data/blanka-001 --samples 6 --max-seconds 900
+python -m experiments.rl.train --dataset .local/rl-data/blanka-001/manifest.json --output .local/rl-runs/train-001 --workers 4 --steps 102400 --eval-every 10240
+```
+
+每个采样进程拥有自己的 MAME 和存档副本，从训练池中抽样；四个历史观察和
+每次 12 帧的动作设置与首版相同。PPO 每个 worker 收集 256 次决策后更新，
+总 rollout 为 `256 × workers`。使用 CPU 推理/训练，当前不需要 CUDA。
+默认静音无窗口，最多支持八个采样 worker。
+
+每 10,240 次总决策保存模型，并在固定 dev 开局及 2/6/10 帧等待条件下评估。
+按 dev 胜率优先、平均回报次优选择模型；结束训练、冻结选择并重载模型后，
+才打开 holdout 做最终比较。dev 是用于选模的开发评估，不是最终泛化证明。
+每个阶段还保留 V4 基线，全部失败、未完成片段和模型快照分别保存。
+
+`train.py` 的总步数和评估间隔必须是 `256 × workers` 的正整数倍，且总步数
+可被评估间隔整除。`--seed` 用于重复实验，不能据一次训练判断稳定性。
+不同系统/架构生成的 MAME 存档未承诺互通，应在运行训练的主机上采集。
+加载前验证文件哈希及难度，加载后检查原生角色、满血开局和内部难度。
+
+只测采样吞吐，不更新模型或查看 dev/holdout：
+
+```sh
+python -m experiments.rl.train --dataset .local/rl-data/blanka-001/manifest.json --output .local/rl-runs/bench-4 --workers 4 --benchmark --steps 4096
+python -m experiments.rl.train --dataset .local/rl-data/blanka-001/manifest.json --output .local/rl-runs/bench-8 --workers 8 --benchmark --steps 4096
+```
+
+两个 benchmark 顺序运行，比较总决策/秒。不要把不同等待条件计作独立样本。
+有界 worker 关闭和异常日志用于保留失败；Linux 服务的整个进程组还应设置
+总资源上限和退出清理，避免父进程故障留下模拟器。
+
+### 共享 Linux 主机的资源限制
+
+本次远端为 13900KS / 32 个逻辑 CPU、WSL 可见约 47 GiB RAM。经用户调整，
+整个任务上限设为 `CPUQuota=1200%`、`MemoryMax=16G`、`MemorySwapMax=0`、
+`Nice=10`、`TasksMax=512`；这是全部 worker 共用的上限，不是每个进程的上限。
+使用 CPU-only PyTorch，4090 不参与本轮训练。保持桌面应用有资源余量。
+
+在有 systemd 的 Linux 上，可将完整 Python 命令放入单个 transient service；
+预先设置 `ASTRA_SF2_CONFIG` 为本机实际配置路径，并使用未用过的 unit/output：
+
+```sh
+systemd-run --unit=astra-rl-train-001 \
+  --property=CPUQuota=1200% --property=MemoryMax=16G \
+  --property=MemorySwapMax=0 --property=Nice=10 --property=TasksMax=512 \
+  --property=RuntimeMaxSec=3600 --working-directory="$PWD" \
+  --setenv=ASTRA_SF2_CONFIG="$ASTRA_SF2_CONFIG" \
+  --setenv=OMP_NUM_THREADS=1 --setenv=MKL_NUM_THREADS=1 --setenv=OPENBLAS_NUM_THREADS=1 \
+  "$PWD/.local/rl-venv/bin/python" -m experiments.rl.train \
+  --dataset .local/rl-data/blanka-001/manifest.json \
+  --output .local/rl-runs/train-001 --workers 4 --steps 102400 --eval-every 10240
+journalctl -u astra-rl-train-001 -f
+```
+
+这是可选的 Linux 运维方式，需要运行者有创建服务的权限。Windows/macOS 的
+直接 Python 入口保持可用，但这段 Linux 资源限制命令不适用于它们。
+同一资源预算下顺序执行采集、benchmark 和训练，避免多服务各自占满上限。
+
+## 首版 pilot 的实验设计
 
 - **环境：** 自然投币选 Ken，遇到第一位真实对手后保存 R1。没有修改游戏 RAM
   或强制对手。当前只支持这个开局的一回合训练，不是任意指定对手的采集工具。
@@ -77,13 +142,14 @@ RPC 使用独立编号的终态文件，每个文件发布一次；Python 完整
 超时使实验无效并结束自己创建的 MAME，不重放不确定的按键或恢复请求。
 `rpc_seconds` 包含游戏执行和 IPC 等待，不能把它全部当作纯通信开销；
 `train_seconds` 包含采样、恢复及 PPO 更新，`wall_seconds` 还包括启动和对照。
-目前是单实例原型，尚无多进程采样；先测吞吐再决定并行和传输优化。
+首版 `run.py` 是单实例原型；新 `train.py` 支持单机多进程采样。两台机器联合
+更新同一模型的分布式训练尚未实现，可以分别承担采集、实验和评估。
 
 离线检查（无需模拟器或 ROM）：
 
 ```sh
 python -m pip install lupa==2.8
-python -m unittest experiments.rl.test_rl experiments.rl.test_runtime -v
+python -m unittest experiments.rl.test_rl experiments.rl.test_runtime experiments.rl.test_collect experiments.rl.test_dataset experiments.rl.test_train -v
 ```
 
 接口设计参考 [Gymnasium 自定义环境](https://gymnasium.farama.org/main/tutorials/gymnasium_basics/environment_creation/)、
