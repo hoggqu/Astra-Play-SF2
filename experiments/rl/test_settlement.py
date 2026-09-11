@@ -47,8 +47,8 @@ class SettlementTests(unittest.TestCase):
         s['p1'].update(hp=-1,a=8,anim=388594);s['p2']['a']=16
         return s
     def test_guile_late_ko_is_a_loss_after_original_award_and_maturity(self):
-        s=self.guile();self.tick(s,360);self.assertEqual(len(self.core.rounds),0)
-        self.tick(s,361)
+        s=self.guile();self.tick(s,390);self.assertEqual(len(self.core.rounds),0)
+        self.tick(s,391)
         row=self.core.rounds[1]
         self.assertEqual(row.outcome,'loss');self.assertEqual(row.settled.p1.a,8)
         self.assertEqual(row.settled.p1.hp,-1);self.assertEqual(row.settled.p1.displayed_hp,6)

@@ -3,8 +3,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from .report_normal import render_markdown, summarize
+from .report_normal import main, render_markdown, summarize
 
 
 def write(path, value):
@@ -18,7 +19,7 @@ def fixture(root, native=False):
                                   'status': 'complete', 'difficulty': 3, 'seed': 42,
                                   'cycles': [{'ordinal': 1, 'status': 'complete', 'model_sha256': 'model'}]})
     train = campaign/'cycle-001/train'
-    write(train/'result.json', {'status': 'complete', 'actual_steps': 36, 'model_sha256': 'model'})
+    write(train/'result.json', {'schema': 'astra.rl-batch-prototype.v1', 'difficulty': 3, 'status': 'complete', 'actual_steps': 36, 'model_sha256': 'model'})
     row = {'phase': 'train', 'baseline': False, 'episode': 1, 'opponent': 2, 'checkpoint': 0,
            'outcome': 'win', 'steps': 12, 'frames': 144}
     path = train/'worker-00/episodes.jsonl'
@@ -29,7 +30,7 @@ def fixture(root, native=False):
     native_path.parent.mkdir()
     native_path.write_text(json.dumps(row)+'\n'+json.dumps(pending)+'\n')
     play = campaign/'cycle-001/continuous'
-    write(play/'result.json', {'status': 'complete', 'model_sha256': 'model', 'native_timing': native,
+    write(play/'result.json', {'schema': 'astra.rl-continuous.v1', 'difficulty': 3, 'status': 'complete', 'model_sha256': 'model', 'native_timing': native,
                                'native_timing_audit': {'ok': native},
                                'attempts': [{'id': 'l3-001', 'outcome': 'loss', 'audit': {'ok': True},
                                              'matches': ['training/m01.json']}]})
@@ -40,6 +41,114 @@ def fixture(root, native=False):
 
 
 class ReportTests(unittest.TestCase):
+    def test_action_interface_identity_requires_its_final_audit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            play = campaign/'cycle-001/continuous'
+            path = play/'result.json'
+            result = json.loads(path.read_text())
+            interface = {'variant': 'fast', 'action_interface': 'fire2-experiment',
+                         'model_sha256': 'model', 'decision_native_frames': 12}
+            write(play/'action-interface.json', interface)
+            item = summarize(continuous_paths=[play])['standalone'][0]
+            self.assertEqual(item['classification'], 'pending')
+            self.assertEqual(item['summary']['variant'], 'fast')
+            self.assertEqual(item['summary']['action_interface_protocol'], interface)
+            self.assertEqual(len(item['summary']['action_interface_protocol_sha256']), 64)
+            result.update(variant='fast', action_interface='fire2-experiment', action_interface_audit={'ok': True})
+            write(path, result)
+            report = summarize(continuous_paths=[play])
+            self.assertEqual(report['standalone'][0]['summary']['attempt_counts'], {'loss': 1})
+            self.assertIn('fire2-experiment', render_markdown(report))
+            result['action_interface_audit'] = {'ok': False, 'reason': 'interface mismatch'}
+            write(path, result)
+            self.assertEqual(summarize(continuous_paths=[play])['standalone'][0]['classification'], 'invalid')
+            (play/'action-interface.json').unlink()
+            del result['action_interface_audit']
+            write(path, result)
+            self.assertEqual(summarize(continuous_paths=[play])['standalone'][0]['classification'], 'pending')
+
+    def test_categorical_identity_and_final_sampling_audit_are_required(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            play = campaign/'cycle-001/continuous'
+            path = play/'result.json'
+            result = json.loads(path.read_text())
+            protocol = {'model_sha256': 'model', 'selection': 'categorical_softmax',
+                        'policy_seed': 71, 'policy_prng': 'park_miller_48271_v1'}
+            write(play/'sampling-protocol.json', protocol)
+            item = summarize(continuous_paths=[play])['standalone'][0]
+            self.assertEqual(item['classification'], 'pending')
+            self.assertEqual(item['summary']['attempt_counts'], {'pending': 1})
+            self.assertEqual(item['summary']['selection'], 'categorical_softmax')
+            self.assertEqual(item['summary']['policy_seed'], 71)
+            result.update(protocol, evaluation_kind='fixed-weight categorical policy', sampling_audit={'ok': True})
+            write(path, result)
+            report = summarize(continuous_paths=[play])
+            summary = report['standalone'][0]['summary']
+            self.assertEqual(summary['attempt_counts'], {'loss': 1})
+            self.assertEqual(summary['evaluation_kind'], 'fixed-weight categorical policy')
+            self.assertEqual(summary['sampling_audit'], {'ok': True})
+            self.assertIn('categorical_softmax', render_markdown(report))
+            result['sampling_audit'] = {'ok': False, 'reason': 'wrong draw'}
+            write(path, result)
+            self.assertEqual(summarize(continuous_paths=[play])['standalone'][0]['classification'], 'invalid')
+            # A failed execution cannot become pending merely because no audit exists.
+            result['status'] = 'invalid'
+            del result['sampling_audit']
+            write(path, result)
+            self.assertEqual(summarize(continuous_paths=[play])['standalone'][0]['classification'], 'invalid')
+            # Declared categorical selection requires the audit even without a sidecar.
+            result['status'] = 'complete'
+            write(path, result)
+            (play/'sampling-protocol.json').unlink()
+            self.assertEqual(summarize(continuous_paths=[play])['standalone'][0]['classification'], 'pending')
+
+    def test_standalone_stages_keep_identity_and_deduplicate_repeated_paths(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            train, play = campaign/'cycle-001/train', campaign/'cycle-001/continuous'
+            report = summarize(training_paths=[train, train/'.'], continuous_paths=[play, play/'.'])
+            self.assertEqual(report['campaigns'], [])
+            self.assertEqual(len(report['standalone']), 2)
+            self.assertEqual(len(report['duplicate_input_paths_ignored']), 2)
+            self.assertEqual(report['standalone'][0]['summary']['python_completed_rounds'], 1)
+            self.assertEqual(report['standalone'][1]['summary']['attempt_counts'], {'loss': 1})
+            self.assertEqual(report['standalone'][0]['summary']['model_sha256'], 'model')
+            self.assertIn('独立训练', render_markdown(report))
+            self.assertIn('独立连续验证', render_markdown(report))
+
+    def test_explicit_campaign_child_stages_are_not_counted_twice(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            report = summarize([campaign], [campaign/'cycle-001/train'], [campaign/'cycle-001/continuous'])
+            self.assertEqual(len(report['campaigns']), 1)
+            self.assertEqual(report['standalone'], [])
+            self.assertEqual([row['reason'] for row in report['duplicate_input_paths_ignored']],
+                             ['already_reported_campaign_stage']*2)
+
+    def test_standalone_native_audit_failure_is_invalid(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            play = campaign/'cycle-001/continuous'
+            result = json.loads((play/'result.json').read_text())
+            result['native_timing_audit']['ok'] = False
+            write(play/'result.json', result)
+            item = summarize(continuous_paths=[play])['standalone'][0]
+            self.assertEqual(item['classification'], 'invalid')
+            self.assertEqual(item['summary']['rounds'], {})
+
+    def test_cli_accepts_standalone_only_and_rejects_zero_inputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            campaign = fixture(root, native=True)
+            output = root/'report'
+            with patch('sys.argv', ['report_normal', '--training', str(campaign/'cycle-001/train'), '--output', str(output)]):
+                main()
+            self.assertTrue((output/'report.json').is_file())
+            with self.assertRaises(ValueError):
+                summarize()
+
     def test_repeated_campaign_and_native_copies_never_double_count(self):
         with tempfile.TemporaryDirectory() as folder:
             campaign = fixture(Path(folder), native=True)

@@ -1,7 +1,7 @@
 """Read-only campaign results: preserve identities, losses, and incomplete evidence.
 
-Only the legacy and native Normal campaign schemas are supported. This derives
-statistics from existing evidence; it does not certify, replay, or control MAME.
+Supports legacy/native Normal campaigns and standalone training/native-play stages.
+This derives statistics from existing evidence; it does not certify, replay, or control MAME.
 """
 import argparse
 from collections import Counter
@@ -117,7 +117,9 @@ def training_summary(folder, issues):
                         'python_steps_in_completed_rounds': sum(row.get('steps', 0) for row in primary.values()),
                         'native_unconfirmed_rounds': len(unconfirmed),
                         'partial_records': len(worker_partials), 'native_error_partial_records': len(native_partials)})
-    return {'status': result.get('status', 'not_started'), 'result_sha256': digest,
+    return {'status': result.get('status', 'not_started'), 'schema': result.get('schema'),
+            'difficulty': result.get('difficulty'), 'seed': result.get('seed'),
+            'dataset_sha256': result.get('dataset_sha256'), 'result_sha256': digest,
             'model_sha256': result.get('model_sha256'), 'init_model_sha256': result.get('init_model_sha256'),
             'actual_steps_reported': result.get('actual_steps'), 'error': result.get('error'),
             'python_completed_rounds': len(full), 'rounds': rounds_table(full),
@@ -136,20 +138,45 @@ def child_path(base, relative):
 
 def continuous_summary(folder, native_required, issues):
     result, digest = read_object(folder/'result.json', issues)
-    output = {'status': result.get('status', 'not_started'), 'result_sha256': digest,
+    output = {'status': result.get('status', 'not_started'), 'schema': result.get('schema'),
+              'difficulty': result.get('difficulty'), 'result_sha256': digest,
               'model_sha256': result.get('model_sha256'), 'error': result.get('error'),
               'native_timing': result.get('native_timing', False), 'attempts': [],
               'rounds': {}, 'unverified_observed_rounds': {}}
+    protocol_path = folder/'sampling-protocol.json'
+    protocol, protocol_hash = read_object(protocol_path, issues)
+    identity_keys = ('selection', 'policy_seed', 'policy_prng', 'evaluation_kind')
+    output.update({key: result.get(key, protocol.get(key)) for key in identity_keys})
+    output['sampling_audit'] = result.get('sampling_audit')
+    output['sampling_protocol'] = protocol or None
+    output['sampling_protocol_sha256'] = protocol_hash
+    sampling_required = protocol_path.exists() or str(output.get('selection', '')).startswith('categorical')
+    output['sampling_audit_required'] = sampling_required
+    interface_path = folder/'action-interface.json'
+    interface, interface_hash = read_object(interface_path, issues)
+    for key in ('action_interface', 'variant'):
+        output[key] = result.get(key, interface.get(key))
+    output['action_interface_audit'] = result.get('action_interface_audit')
+    output['action_interface_protocol'] = interface or None
+    output['action_interface_protocol_sha256'] = interface_hash
+    interface_required = interface_path.exists() or 'action_interface' in result
+    output['action_interface_audit_required'] = interface_required
+    audits = [(native_required, result.get('native_timing_audit')),
+              (sampling_required, result.get('sampling_audit')),
+              (interface_required, result.get('action_interface_audit'))]
+    required_audits = [value for required, value in audits if required]
     status = result.get('status')
-    timing_audit = result.get('native_timing_audit')
-    pending_run = status in ('initializing', 'running') or (
-        status == 'complete' and native_required and timing_audit is None)
-    # native_continuous writes its final audit after its underlying continuous
-    # runner first publishes complete. A snapshot in this short window is pending.
-    output['audit_state'] = 'pending' if pending_run else ('invalid' if status == 'invalid' else 'available')
-    valid_run = status == 'complete' and not pending_run
+    audit_failed = status == 'invalid' or (status == 'complete' and any(
+        (value or {}).get('ok') is False for value in required_audits))
+    pending_run = not audit_failed and (status in ('initializing', 'running') or (
+        status == 'complete' and any(value is None for value in required_audits)))
+    # Outer experiment audits publish after underlying native/continuous results.
+    # Missing required final audits in this short window remain pending.
+    output['audit_state'] = 'pending' if pending_run else ('invalid' if audit_failed else 'available')
+    valid_run = status == 'complete' and not pending_run and all(
+        (value or {}).get('ok') is True for value in required_audits)
     if native_required:
-        valid_run = valid_run and result.get('native_timing') is True and (timing_audit or {}).get('ok') is True
+        valid_run = valid_run and result.get('native_timing') is True
     verified_rounds, other_rounds = [], []
     for attempt in result.get('attempts', []):
         reported = attempt.get('outcome', 'invalid')
@@ -183,7 +210,7 @@ def continuous_summary(folder, native_required, issues):
         (verified_rounds if valid else other_rounds).extend(rows)
         failed = next((m for m in reversed(matches) if m['result'] == 'cpu_win'), None)
         output['attempts'].append({'id': attempt.get('id'), 'outcome': outcome, 'reported_outcome': reported,
-                                   'pending_reason': 'Run or native timing audit has not finalized' if pending_run else None,
+                                   'pending_reason': 'Run or a required native/sampling/action-interface audit has not finalized' if pending_run else None,
                                    'match_wins': native_wins, 'failed_opponent': failed['opponent'] if failed else None,
                                    'failed_opponent_name': failed['name'] if failed else None, 'matches': matches})
     output['rounds'] = rounds_table(verified_rounds)
@@ -260,6 +287,8 @@ def render_markdown(report):
             train, play = cycle['training'], cycle['continuous']
             lines += [f"### Cycle {cycle['cycle']}（{cycle['status']}）", '',
                       f"模型：`{cycle.get('model_sha256') or train.get('model_sha256') or '尚无最终模型'}`", '',
+                      f"游玩选择方式：{play.get('selection') or '未声明'}；策略种子：{play.get('policy_seed')}；PRNG：{play.get('policy_prng')}；采样审计：{json.dumps(play.get('sampling_audit'), ensure_ascii=False)}。", '',
+                      f"动作接口：{play.get('action_interface') or '未声明'}；变体：{play.get('variant')}；接口审计：{json.dumps(play.get('action_interface_audit'), ensure_ascii=False)}。", '',
                       f"训练：{train['status']}；主记录完整小局 {train['python_completed_rounds']}；Lua 待核对 {train['native_unconfirmed_rounds']}；未完成片段记录 {train['partial_records']}。", '',
                       '| 对手 | 训练胜/负/平 | 连续验证小局胜/负/平 | 未通过审计的游玩观察胜/负/平 |',
                       '|---|---:|---:|---:|']
@@ -279,37 +308,112 @@ def render_markdown(report):
                 lines += ['', '待核对 Lua 原生小局（未加入训练成绩）：`'+json.dumps(train['native_unconfirmed_by_opponent'], ensure_ascii=False)+'`']
             lines.append('')
         lines += [f"数据问题/未完成尾行：{len(run['issues'])}（详见 JSON）。", '']
+    for item in report.get('standalone', []):
+        summary = item['summary']
+        lines += [f"## 独立{'训练' if item['kind'] == 'training' else '连续验证'}：{item['name']}", '',
+                  f"状态：{summary['status']}；分类：{item['classification']}；难度：{summary.get('difficulty')}。",
+                  f"路径：`{item['path']}`", f"结果快照 SHA-256：`{summary['result_sha256']}`",
+                  f"模型 SHA-256：`{summary.get('model_sha256') or '尚无最终模型'}`", '']
+        if item['kind'] == 'training':
+            lines += [f"完整训练小局 {summary['python_completed_rounds']}；Lua 待核对 {summary['native_unconfirmed_rounds']}；未完成片段记录 {summary['partial_records']}。", '',
+                      '| 对手 | 训练胜/负/平 | Lua 待核对胜/负/平 |', '|---|---:|---:|']
+            tables = [summary['rounds'], summary['native_unconfirmed_by_opponent']]
+        else:
+            lines += [f"选择方式：{summary.get('selection') or '未声明'}；策略种子：{summary.get('policy_seed')}；PRNG：{summary.get('policy_prng')}。",
+                      f"评估类型：{summary.get('evaluation_kind') or '未声明'}；采样审计：{json.dumps(summary.get('sampling_audit'), ensure_ascii=False)}。",
+                      f"动作接口：{summary.get('action_interface') or '未声明'}；变体：{summary.get('variant')}；接口审计：{json.dumps(summary.get('action_interface_audit'), ensure_ascii=False)}。", '']
+            lines += ['| 对手 | 已审计游玩小局胜/负/平 | 未终审/无效观察胜/负/平 |', '|---|---:|---:|']
+            tables = [summary['rounds'], summary['unverified_observed_rounds']]
+        for opponent in sorted(set().union(*(set(table) for table in tables)), key=int):
+            counts = ['/'.join(str(table.get(opponent, {}).get(k, 0)) for k in OUTCOMES) for table in tables]
+            lines.append(f"| {NAMES[int(opponent)]} | {' | '.join(counts)} |")
+        if item['kind'] == 'continuous':
+            lines += ['', '| 整路线尝试 | 结果 | 已赢对手数 | 失利对手 |', '|---|---|---:|---|']
+            for attempt in summary['attempts']:
+                outcome = {'rl_gameplay_clear': '通关', 'loss': '失败', 'invalid': '无效', 'pending': '待定（尚未终审）'}[attempt['outcome']]
+                lines.append(f"| {attempt['id']} | {outcome} | {attempt['match_wins']} | {attempt['failed_opponent_name'] or '—'} |")
+        if summary.get('error'):
+            lines += ['', f"执行错误：{summary['error']}"]
+        lines += ['', f"数据问题/未完成尾行：{len(item['issues'])}（详见 JSON）。", '']
+    if report.get('duplicate_input_paths_ignored'):
+        lines += ['去重输入（未再次统计）：`'+json.dumps(report['duplicate_input_paths_ignored'], ensure_ascii=False)+'`', '']
     if report['duplicate_campaign_paths_ignored']:
         lines += ['重复传入的同一路径已忽略：`'+', '.join(report['duplicate_campaign_paths_ignored'])+'`', '']
     return '\n'.join(lines)
 
 
-def summarize(paths):
-    seen, reports, repeated = set(), [], []
+def summarize_standalone(path, kind):
+    issues = []
+    raw, _ = read_object(path/'result.json', issues, required=True)
+    if kind == 'training':
+        if raw.get('schema') not in ('astra.rl-scaled.v1', 'astra.rl-batch-prototype.v1'):
+            raise ValueError(f'Unsupported standalone training schema: {path}')
+        if any(raw.get(key) is True for key in ('benchmark', 'parity', 'native_parity')):
+            raise ValueError('Benchmark/parity runs are not training stages')
+        summary = training_summary(path, issues)
+    else:
+        if raw.get('schema') != 'astra.rl-continuous.v1':
+            raise ValueError(f'Unsupported standalone continuous schema: {path}')
+        summary = continuous_summary(path, True, issues)
+    state = summary['status']
+    if state not in ('complete', 'invalid', 'not_started') or summary.get('audit_state') == 'pending':
+        state = 'pending'
+    if kind == 'continuous' and summary.get('attempt_counts', {}).get('invalid', 0):
+        state = 'invalid'
+    return {'path': str(path), 'name': path.name, 'kind': kind,
+            'classification': state, 'summary': summary, 'issues': issues}
+
+
+def summarize(paths=(), training_paths=(), continuous_paths=()):
+    if not paths and not training_paths and not continuous_paths:
+        raise ValueError('At least one campaign, training, or continuous path is required')
+    seen, reports, repeated, ignored = set(), [], [], []
     for path in paths:
         resolved = Path(path).resolve()
         if resolved in seen:
             repeated.append(str(resolved))
+            ignored.append({'path': str(resolved), 'kind': 'campaign', 'reason': 'repeated_input'})
             continue
         seen.add(resolved)
         reports.append(summarize_campaign(resolved))
+    covered = set()
+    for run in reports:
+        for cycle in run['cycles']:
+            folder = Path(run['path'])/f"cycle-{cycle['cycle']:03d}"
+            covered.update((folder/name).resolve() for name in ('train', 'continuous'))
+    standalone = []
+    for kind, items in (('training', training_paths), ('continuous', continuous_paths)):
+        for path in items:
+            resolved = Path(path).resolve()
+            if resolved in covered or resolved in seen:
+                ignored.append({'path': str(resolved), 'kind': kind,
+                                'reason': 'already_reported_campaign_stage' if resolved in covered else 'repeated_input'})
+                continue
+            standalone.append(summarize_standalone(resolved, kind))
+            seen.add(resolved)
     return {'schema': 'astra.rl-normal-report.v1', 'generated_utc': datetime.now(timezone.utc).isoformat(),
-            'read_only_derived_statistics': True, 'campaigns': reports, 'duplicate_campaign_paths_ignored': repeated}
+            'read_only_derived_statistics': True, 'campaigns': reports, 'standalone': standalone,
+            'duplicate_campaign_paths_ignored': repeated, 'duplicate_input_paths_ignored': ignored}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--campaign', type=Path, action='append', required=True, help='Repeat for each campaign directory')
+    parser.add_argument('--campaign', type=Path, action='append', default=[], help='Repeat for each campaign directory')
+    parser.add_argument('--training', type=Path, action='append', default=[], help='Repeat for standalone training directories')
+    parser.add_argument('--continuous', type=Path, action='append', default=[], help='Repeat for standalone continuous directories; native audit required')
     parser.add_argument('--output', type=Path, required=True, help='Fresh report directory outside source campaigns')
     args = parser.parse_args()
+    sources = args.campaign+args.training+args.continuous
+    if not sources:
+        parser.error('At least one --campaign, --training, or --continuous is required')
     output = args.output.resolve()
-    if any(output.is_relative_to(path.resolve()) for path in args.campaign):
-        parser.error('Write derived report outside all input campaign directories')
-    report = summarize(args.campaign)
+    if any(output.is_relative_to(path.resolve()) for path in sources):
+        parser.error('Write derived report outside all input directories')
+    report = summarize(args.campaign, args.training, args.continuous)
     output.mkdir(parents=True, exist_ok=False)
     (output/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     (output/'report.md').write_text(render_markdown(report), encoding='utf-8')
-    print(json.dumps({'campaigns': len(report['campaigns']), 'output': str(output)}, ensure_ascii=False))
+    print(json.dumps({'campaigns': len(report['campaigns']), 'standalone': len(report['standalone']), 'output': str(output)}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

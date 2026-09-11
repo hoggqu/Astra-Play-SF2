@@ -80,6 +80,22 @@ python -m experiments.rl.report_normal --campaign .local/rl-runs/normal-native-c
 输出目录须为新目录，并位于输入运行目录之外。报告不启动模拟器、不控制训练，
 也不代替原始连续游玩审计。
 
+独立批量训练可用 `--training PATH` 纳入报告，独立原生连续验证可用
+`--continuous PATH`；三个输入选项均可重复组合，已覆盖的子阶段自动去重。
+
+默认连续验证选概率最大的动作。另有两个独立的验证对照，均固定网络权重：
+
+```sh
+python -m experiments.rl.stochastic_continuous --model MODEL.zip --output .local/rl-runs/sample-001 --difficulty 3 --attempts 3 --policy-seed 42
+python -m experiments.rl.fast_fire_continuous --model MODEL.zip --output .local/rl-runs/fire-001 --difficulty 3 --attempts 3 --variant fast
+```
+
+前者按网络 softmax 概率采样，使用独立策略 RNG，并复算完整动作与随机数序列；
+后者保持 argmax，只把波动拳改为 2/2/2 帧输入加 6 帧空输入。`--variant original`
+可运行原宏对照。它们分别记录选择方式、种子或动作接口，不能因 ZIP 相同就
+当作同一种策略。首批各三次验证均未通关，尚未据此替换默认训练方式。
+结果识别的修复及原生证据边界见 [SETTLEMENT.md](SETTLEMENT.md)。
+
 旧 `campaign` 保留为历史对照：逐决策 RPC、每对手一个 lead 的 dev 选模并
 继承 best-dev。它可能回滚优化进展，且暂停恢复的帧回调不严格等于推进的原生帧；
 不要把其计数与新的 native-time 训练混合。时序检查和历史失败见上述说明。
