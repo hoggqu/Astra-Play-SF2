@@ -135,11 +135,12 @@ def main():
     parser.add_argument('--attempts', type=int, default=1)
     parser.add_argument('--speed', choices=('normal','2x','4x','fast'), default='fast')
     parser.add_argument('--show-window', action='store_true')
+    parser.add_argument('--all-attempts', action='store_true', help='Complete all requested natural-coin attempts, including after a clear; stop on invalid execution')
     args = parser.parse_args()
     def stop(_signal, _frame):
         raise KeyboardInterrupt('SIGTERM')
     signal.signal(signal.SIGTERM, stop)
-    result = evaluate(load_config(), args.model, args.output, args.difficulty, args.attempts, args.speed, args.show_window)
+    result = evaluate(load_config(), args.model, args.output, args.difficulty, args.attempts, args.speed, args.show_window, stop_on_first_clear=not args.all_attempts)
     print(json.dumps(result, indent=2), flush=True)
     raise SystemExit(2 if result['status']!='complete' else 0 if any(a['outcome']=='rl_gameplay_clear' for a in result['attempts']) else 1)
 

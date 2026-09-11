@@ -76,3 +76,24 @@ They compare Lua logits with Torch, feature ordering/history, twelve-frame input
 cadence across hits and side switches, native round history resets, source
 staging, and rejection of incomplete clears/lifecycle violations. They do not
 replace native MAME evaluation.
+
+
+## Fixed-sample natural-coin reliability runs
+
+`--all-attempts` disables the historical stop-on-first-clear behavior in both
+`continuous` and `native_continuous`, including generated 16-action/chain
+packages. For example, run the frozen package's native evaluator with
+`--attempts 20 --all-attempts` to retain exactly twenty valid attempts. A clear
+finishes through the existing ending sequence; the next attempt uses the same
+process and waits for native coin readiness before inserting a new coin. There
+is no reset, load, continue, model replacement, or in-match pause.
+
+An invalid execution stops the run immediately and remains in the evidence; it
+is not replaced to fill the sample. Results record `stop_on_first_clear: false`.
+A 10-of-20 target requires a completed run, twenty audited attempts, and at least
+ten `rl_gameplay_clear` outcomes from the same model. Ten early clears never
+shorten the twenty-attempt run. Individual native and action-interface audits
+still apply. CLI exit 0 retains its existing meaning of at least one clear;
+callers must check the full sample and their requested success threshold rather
+than treating exit 0 alone as 10-of-20 success. Without the flag, the original
+stop-on-first-clear default is preserved.
