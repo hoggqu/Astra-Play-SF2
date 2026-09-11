@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,12 +23,12 @@ def player(char, hp=144, wins=0, action=0, anim=100):
                 x=100 if char == 4 else 200, y=40, a=action, anim=anim)
 
 
-def match(op, mode, lose=False):
-    opening = dict(timer=99, p1=player(4), p2=player(op))
+def match(op, mode, lose=False, level=3):
+    opening = dict(difficulty_bits=7-level, difficulty_mirror=level, effective_difficulty=level, timer=99, p1=player(4), p2=player(op))
     events = [dict(kind='match_start', frame=0, state=opening, lead_frames=2 if op == 8 else 0)]
     rounds = []
     for n in (1, 2):
-        stop = dict(timer=70, p1=player(4, hp=-1 if lose else 100, wins=0 if lose else n-1),
+        stop = dict(difficulty_bits=7-level, difficulty_mirror=level, effective_difficulty=level, timer=70, p1=player(4, hp=-1 if lose else 100, wins=0 if lose else n-1),
                     p2=player(op, hp=100 if lose else -1, wins=n-1 if lose else 0))
         settled = copy.deepcopy(stop)
         winner = settled['p2' if lose else 'p1']
@@ -42,7 +43,7 @@ def match(op, mode, lose=False):
     events.append(dict(kind='match_finished', frame=722, valid=True, result=result))
     summary = dict(valid_continuous=True, status='complete', phase='complete', active=False,
                    training_validation=False, loads=0, saves=0, pauses_during_match=0,
-                   difficulty_bits=4, difficulty_checks=722, frame=722, speed='fast', opponent=op,
+                   difficulty_bits=7-level, difficulty_checks=722, effective_difficulty=level, effective_difficulty_checks=722, frame=722, speed='fast', opponent=op,
                    mode=mode, timeout_guard=op in (1, 5, 8, 11), telemetry_error=False,
                    diagnostic_level='full', trace_frames=722, score=rounds[-1]['score'], result=result,
                    latest=rounds[-1]['settled'])
@@ -50,6 +51,9 @@ def match(op, mode, lose=False):
     trace = dict(columns=columns,
                  rows=[[i, '', False]+[0]*(len(columns)-3) for i in range(1, 723)],
                  decisions=[], all_frames=True, all_decisions=True, observed_frames=722)
+    for row in trace['rows']:
+        for key, value in [('difficulty_bits', 7-level), ('difficulty_mirror', level), ('effective_difficulty', level)]:
+            row[columns.index(key)] = value
     return dict(summary=summary, trace=trace, rounds=rounds, events=events, telemetry_error=False)
 
 
@@ -74,12 +78,27 @@ class EvidenceTests(unittest.TestCase):
         lifecycle = 'training/l3-001/session-lifecycle.json'
         write(self.run/lifecycle, dict(resets=0, loads=0, saves=0, active=False, violation=False))
         self.attempt = dict(id='l3-001', difficulty=3, outcome='gameplay_clear', matches=paths, images=images, lifecycle=lifecycle)
-        self.manifest = dict(schema='test.v1', status='complete', difficulty=[3], attempts_requested=1,
+        self.manifest = dict(schema='astra.run.v2', status='complete', difficulty=[3], attempts_requested=1,
+                             consecutive=None, version='0.1.0', mame_version='0.288', rom='sf2',
                              speed='fast', policy_sha256=digest(runtime/'fighter.lua'),
                              runtime_sha256={p.name: digest(p) for p in runtime.iterdir()}, attempts=[self.attempt])
+        self.set_boot(3)
         command = "play_match('training/l3-001/m00',7,{training_validation=false,speed='fast'})"
         (self.run/'training/commands.jsonl').write_text('\n'.join(json.dumps(dict(id=1, command=command, event=e)) for e in ('prepared', 'accepted', 'completed'))+'\n')
         self.seal()
+
+    def set_boot(self, level):
+        settings = self.run/'training/runtime/settings.lua'
+        settings.write_text(f"astra_difficulty_bits={7-level}\nastra_difficulty_label='{level}'\n", encoding='utf-8')
+        self.manifest['runtime_sha256']['settings.lua'] = digest(settings)
+        (self.run/'boot-config.xml').write_text(
+            '<mameconfig version="10"><system name="sf2"><input>'
+            f'<port tag=":DSWB" type="DIPSWITCH" mask="7" defvalue="4" value="{7-level}" />'
+            '</input></system></mameconfig>', encoding='utf-8')
+        self.manifest['boot_config_sha256'] = digest(self.run/'boot-config.xml')
+        self.manifest['boot_observation'] = 'training/boot-observation.json'
+        write(self.run/'training/boot-observation.json',
+              dict(difficulty_bits=7-level, difficulty_mirror=level, effective_difficulty=level))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -89,10 +108,11 @@ class EvidenceTests(unittest.TestCase):
         write(p.with_name(p.stem+'-status.json'), raw['summary'])
         p.with_name(p.stem+'-policy.lua').write_bytes((self.run/'training/runtime/fighter.lua').read_bytes())
 
-    def seal(self):
+    def seal(self, include_child_seals=False):
         write(self.run/'run.json', self.manifest)
         files = {p.relative_to(self.run).as_posix(): digest(p) for p in self.run.rglob('*')
-                 if p.is_file() and p.name not in ('evidence-sha256.json', 'report.json', 'report.md', 'report.html', 'reviews.jsonl')}
+                 if p.is_file() and (p.name not in ('evidence-sha256.json', 'report.json', 'report.md', 'report.html', 'reviews.jsonl')
+                                    or (include_child_seals and p.name == 'evidence-sha256.json' and p.parent != self.run))}
         write(self.run/'evidence-sha256.json', dict(files=files))
 
     def test_complete_report_and_explicit_review(self):
@@ -197,6 +217,171 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(report['gameplay_clears_audited'],0)
         self.assertIn('provisional',report['round_stats_basis'])
         with self.assertRaises(ValueError): record_review(self.run,'l3-001','reviewer','approve')
+
+    def test_boot_configuration_and_internal_reading_must_match(self):
+        original = (self.run/'boot-config.xml').read_text()
+        for content in (original.replace('value="4" />', 'value="0" />'),
+                        original.replace('tag=":DSWB"', 'tag=":DSWA"'),
+                        '<malformed'):
+            with self.subTest(content=content):
+                (self.run/'boot-config.xml').write_text(content)
+                self.manifest['boot_config_sha256'] = digest(self.run/'boot-config.xml')
+                self.seal()
+                self.assertFalse(audit_run(self.run)['ok'])
+        self.set_boot(3)
+        self.manifest['boot_config_sha256'] = '0'*64
+        self.seal()
+        self.assertFalse(audit_run(self.run)['ok'])
+        self.set_boot(3)
+        write(self.run/'training/boot-observation.json',
+              dict(difficulty_bits=4, difficulty_mirror=3, effective_difficulty=7))
+        self.seal()
+        self.assertFalse(audit_run(self.run)['ok'])
+        self.assertEqual(write_report(self.run)['difficulty_verification'], 'unverified')
+
+    def test_internal_summary_snapshot_and_trace_tampering(self):
+        rel = self.attempt['matches'][0]
+        original = json.loads((self.run/rel).read_text())
+        for mutate in (lambda r: r['summary'].update(effective_difficulty=7),
+                       lambda r: r['summary'].update(effective_difficulty_checks=721),
+                       lambda r: r['events'][0]['state'].update(difficulty_mirror=7),
+                       lambda r: r['rounds'][0]['settled'].update(effective_difficulty=7),
+                       lambda r: r['trace']['rows'][19].__setitem__(r['trace']['columns'].index('effective_difficulty'), 7)):
+            with self.subTest(mutate=mutate):
+                raw = copy.deepcopy(original)
+                mutate(raw)
+                self.put_match(rel, raw)
+                self.seal()
+                self.assertFalse(audit_run(self.run)['ok'])
+
+    def test_legacy_run_remains_readable_but_difficulty_unverified(self):
+        self.manifest['schema'] = 'astra.run.v1'
+        del self.manifest['boot_config_sha256']
+        del self.manifest['boot_observation']
+        for rel in self.attempt['matches']:
+            raw = json.loads((self.run/rel).read_text())
+            raw['summary'].pop('effective_difficulty')
+            raw['summary'].pop('effective_difficulty_checks')
+            indices = [i for i, key in enumerate(raw['trace']['columns']) if key not in
+                       ('difficulty_bits', 'difficulty_mirror', 'effective_difficulty')]
+            raw['trace']['columns'] = [raw['trace']['columns'][i] for i in indices]
+            raw['trace']['rows'] = [[row[i] for i in indices] for row in raw['trace']['rows']]
+            self.put_match(rel, raw)
+        self.seal()
+        report = write_report(self.run)
+        self.assertFalse(report['audit']['ok'])
+        self.assertEqual(report['rounds']['win'], 22)
+        self.assertEqual(report['difficulties']['3']['gameplay_clears'], 1)
+        self.assertEqual(report['gameplay_clears_audited'], 0)
+        self.assertIn('legacy', ' '.join(report['audit']['errors']))
+        with self.assertRaises(ValueError):
+            record_review(self.run, 'l3-001', 'name', 'approve')
+
+    def make_batch(self):
+        from astra_play_sf2.evidence import _rebase_attempt
+        batch = self.run/'batch'
+        original = self.run
+        original_manifest = copy.deepcopy(self.manifest)
+        for level in (3, 7):
+            child = batch/f'sessions/l{level}'
+            child.mkdir(parents=True)
+            shutil.copytree(original/'training', child/'training')
+            self.run = child
+            self.manifest = copy.deepcopy(original_manifest)
+            self.manifest['difficulty'] = [level]
+            self.manifest['attempts'][0]['difficulty'] = level
+            self.manifest['attempts'][0]['id'] = f'l{level}-001'
+            for relative, op in zip(self.manifest['attempts'][0]['matches'], self.route):
+                self.put_match(relative, match(op, f'mode_{op}', level=level))
+            self.set_boot(level)
+            self.seal()
+        self.run = batch
+        self.manifest = dict(schema='astra.batch.v1', status='complete', difficulty=[3, 7],
+                             attempts_requested=1, consecutive=None, speed='fast',
+                             version='0.1.0', mame_version='0.288', rom='sf2',
+                             policy_sha256=original_manifest['policy_sha256'], attempts=[],
+                             sessions=[dict(difficulty=n, path=f'sessions/l{n}') for n in (3, 7)])
+        for session in self.manifest['sessions']:
+            child = json.loads((batch/session['path']/'run.json').read_text())
+            self.manifest['attempts'] += [_rebase_attempt(a, session['path']) for a in child['attempts']]
+        self.seal(include_child_seals=True)
+        return batch
+
+    def test_batch_recursively_verifies_and_rebases(self):
+        batch = self.make_batch()
+        audited = audit_run(batch)
+        self.assertTrue(audited['ok'], audited['errors'])
+        self.assertEqual(len(audited['attempts']), 2)
+        self.assertTrue(audited['attempts'][1]['matches'][0]['log'].startswith('sessions/l7/'))
+        report = write_report(batch)
+        self.assertEqual(report['rounds']['win'], 44)
+        self.assertEqual(report['gameplay_clears_audited'], 2)
+        record_review(batch, 'l7-001', 'reviewer', 'approve')
+        self.assertEqual(write_report(batch)['reviewer_approved_clears'], 1)
+
+    def test_batch_cross_session_splice_and_missing_child_seal_rejected(self):
+        batch = self.make_batch()
+        self.manifest['attempts'][1]['matches'][0] = self.manifest['attempts'][0]['matches'][0]
+        self.seal()
+        self.assertFalse(audit_run(batch)['ok'])
+        self.assertIn('rebased', ' '.join(audit_run(batch)['errors']))
+        self.assertIn('seal omits', ' '.join(audit_run(batch)['errors']))
+
+    def test_resealed_wrong_runtime_settings_refused(self):
+        settings = self.run/'training/runtime/settings.lua'
+        settings.write_text("astra_difficulty_bits=0\nastra_difficulty_label='7'\n")
+        self.manifest['runtime_sha256']['settings.lua'] = digest(settings)
+        self.seal()
+        result = audit_run(self.run)
+        self.assertFalse(result['ok'])
+        self.assertIn('settings.lua difficulty differs', ' '.join(result['errors']))
+
+    def test_batch_resealed_core_or_selection_swap_refused(self):
+        batch = self.make_batch()
+        parent_manifest = self.manifest
+        child = batch/'sessions/l7'
+        child_manifest = json.loads((child/'run.json').read_text())
+        originals = {name: (child/'training/runtime'/name).read_bytes()
+                     for name in ('play_core.lua', 'selection.json')}
+        for name in originals:
+            with self.subTest(name=name):
+                path = child/'training/runtime'/name
+                # Both altered leaves remain individually valid under their own identity.
+                # The batch additionally prohibits switching that identity between levels.
+                path.write_bytes(originals[name]+b'\n ')
+                self.run, self.manifest = child, copy.deepcopy(child_manifest)
+                self.manifest['runtime_sha256'][name] = digest(path)
+                self.seal()
+                self.assertTrue(audit_run(child)['ok'])
+                self.run, self.manifest = batch, parent_manifest
+                self.seal(include_child_seals=True)
+                result = audit_run(batch)
+                self.assertFalse(result['ok'])
+                self.assertIn('runtime identity differs', ' '.join(result['errors']))
+                self.assertNotIn('Sealed evidence changed', ' '.join(result['errors']))
+                path.write_bytes(originals[name])
+                self.run, self.manifest = child, child_manifest
+                self.seal()
+                self.run, self.manifest = batch, parent_manifest
+                self.seal(include_child_seals=True)
+        self.assertTrue(audit_run(batch)['ok'])
+
+    def test_batch_partial_and_wrong_session_settings_not_verified(self):
+        batch = self.make_batch()
+        child = batch/'sessions/l7/run.json'
+        data = json.loads(child.read_text())
+        data['speed'] = 'normal'
+        write(child, data)
+        result = audit_run(batch)
+        self.assertFalse(result['ok'])
+        self.assertIn('speed differs', ' '.join(result['errors']))
+        self.manifest['status'] = 'invalid'
+        self.manifest['sessions'].pop()
+        self.manifest['attempts'].pop()
+        self.seal()
+        report = write_report(batch)
+        self.assertFalse(report['audit']['ok'])
+        self.assertEqual(report['difficulties']['7']['attempts_started'], 0)
 
     def test_draw_pose_and_native_time_latch_boundaries(self):
         state=dict(timer=0,p1=player(4,5,action=18),p2=player(5,5,action=18))

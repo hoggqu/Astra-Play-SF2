@@ -27,7 +27,7 @@ end
 function session_begin(path)
  guard_training_action();session_check()
  assert(not formal_active and not job and not advance and manager.machine.paused)
- assert((manager.machine.ioport.ports[':DSWB']:read()&7)==astra_difficulty_bits,'DIP update not observed')
+ astra_difficulty.check(7-astra_difficulty_bits)
  assert(path:match('^training/[%w_/%-]+$'))
  prefix=path;formal_active=true;persist();formal_event('begin','New ordinary coin; no continue/reset/load/save');observe()
 end
@@ -37,14 +37,10 @@ function session_end()
  -- Do not rewrite the preceding attempt during subsequent idle lifecycle events.
  prefix=nil
 end
-function session_difficulty(level)
+function session_validate()
  guard_training_action();session_check();assert(not formal_active and manager.machine.paused)
- assert(type(level)=='number' and level%1==0 and level>=3 and level<=7)
- astra_difficulty_bits=7-level;astra_difficulty_label=tostring(level)
- manager.machine.ioport.ports[':DSWB'].fields['Difficulty'].user_value=astra_difficulty_bits
- -- I/O reads reflect the previous native frame while paused. Allow the field
- -- update to latch outside any attempt, then the caller checks the observation.
- act({{2,''}})
+ astra_difficulty.check(7-astra_difficulty_bits)
+ observe()
 end
 local function changed(kind)
  counts[kind]=counts[kind]+1;violation=true;persist();formal_event('violation',kind)

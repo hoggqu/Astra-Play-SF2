@@ -35,13 +35,13 @@
     "observe.lua": {
       "origin": "observe.lua",
       "original_sha256": "ade9cc1fedcdd5891ad2da660d1bdbaf36e7f75629c5e3a499e6ea8b09d1d587",
-      "sha256": "ade9cc1fedcdd5891ad2da660d1bdbaf36e7f75629c5e3a499e6ea8b09d1d587",
+      "sha256": "4b003391a1b13f6ecda7e4908f15ef05903bac0c4cbe80dfd3f5685133c70fe1",
       "unchanged": false
     },
     "play.lua": {
       "origin": "coin22-v4-l7/play.lua",
       "original_sha256": "e418df9177fca701d30e215fff17dfe39dae3f1462f54ae06159353edaac5274",
-      "sha256": "58ee9e95a45899cc22fea7f65645ce93e69511025a2ef0787dd7789dc149b6bf",
+      "sha256": "0a099b66952af15a0c7481e61f150329f27cac903ef46a7da72a047e5093f6d7",
       "unchanged": false
     }
   }

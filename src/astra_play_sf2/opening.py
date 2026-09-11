@@ -1,10 +1,19 @@
 """Pure shared R1 predicates. No I/O, emulator imports, or game commands."""
+def require_difficulty(state, level):
+    expected = {'difficulty_bits': 7-level, 'difficulty_mirror': level, 'effective_difficulty': level}
+    if any(type(state.get(key)) is not int or state[key] != value for key, value in expected.items()):
+        raise ValueError(f"Difficulty mismatch: requested={level}, observed="
+                         + str({key: state.get(key) for key in expected}) + '; configure before boot')
+
+
 def make_opening_guard(difficulty_bits):
     assert type(difficulty_bits) is int and 0 <= difficulty_bits <= 4
 
     def opening_context(s, opponent):
         return (isinstance(s, dict) and s.get('paused') is True and s.get('controller_busy') is False
                 and s.get('difficulty_bits') == difficulty_bits
+                and s.get('difficulty_mirror') == 7-difficulty_bits
+                and s.get('effective_difficulty') == 7-difficulty_bits
                 and isinstance(s.get('p1'), dict) and isinstance(s.get('p2'), dict)
                 and s['p1'].get('character') == 4 and s['p2'].get('character') == opponent)
 

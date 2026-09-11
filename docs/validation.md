@@ -1,8 +1,66 @@
 # Validation history and portability
 
-## Original V4 result
+## Difficulty validity correction — 0.1.1
 
-The original project used the same frozen V4 strategy across native difficulty 3 (Normal) through 7 (Hardest), with Ken in MAME 0.288's `sf2` World 910522. Each level finished with five consecutive certified natural-coin clears. Root reviewed the relevant selection, terminal result, and ending evidence in that original macOS environment.
+The [difficulty investigation](difficulty-fix.md) reproduced a startup bug:
+0.1.0 could report requested Hardest with a correct DIP readback while SF2 still
+used cached Normal. The port and original training histories below checked DIP,
+not the internal decoded value. Preserve these historical observations, but treat
+their cross-difficulty certification as **pending revalidation**. Do not assume
+all legacy runs used Normal; the old workspace had different boot settings.
+
+0.1.1 configures each level before boot and requires internal RAM verification.
+New validation results are recorded below; old successes are not
+retrospectively upgraded.
+
+### 0.1.1 local validation — 2026-09-11
+
+Environment: macOS 26.5.2 arm64, Python 3.12.14, MAME 0.288, `sf2` World 910522.
+The frozen fighter, Core and selection hashes remain unchanged.
+
+All five levels passed separate boot and initialized first-round checks:
+
+| Requested level | DIP low bits | Mirror / decoded level | First-round rank / index |
+|---|---:|---|---|
+| 3 | 4 | 3 / 3 | 56 / 7 |
+| 4 | 3 | 4 / 4 | 72 / 9 |
+| 5 | 2 | 5 / 5 | 88 / 11 |
+| 6 | 1 | 6 / 6 | 104 / 13 |
+| 7 | 0 | 7 / 7 | 112 / 14 |
+
+A source-runner batch used levels `[3, 7]`, two attempts per level, fast speed.
+Each level booted once; its second attempt used natural coin insertion.
+An optional local read-only screenshot module was included in the runtime
+hashes for the live preview. It did not change the policy or send inputs.
+
+| Difficulty | Audited gameplay clears | Round W/L/D | Visual approvals |
+|---|---:|---:|---:|
+| 3 Normal | 2/2 | 44/3/0 | 2/2 |
+| 7 Hardest | 2/2 | 44/1/0 | 1/2 |
+
+Batch `20260911T073801Z-39359e0b` passed the parent and both child audits,
+including internal difficulty on every match frame. All five images from each
+attempt were inspected. The first Hardest attempt's ending capture started
+early: it showed the final result, reunion and portrait, but missed the wedding.
+Its visual review was rejected; the eleven audited match wins remain a
+`gameplay_clear`. This capture limitation is separate from difficulty validity.
+
+The built 0.1.1 wheel was installed in an isolated environment with spaces and
+Chinese characters in its path, and imported outside the checkout without
+`PYTHONPATH`. A deliberate diagnostic supplied Normal boot configuration while
+requesting Hardest: native Lua rejected it before any attempt, reporting
+`requested=7 DIP=4 mirror=3 internal=3` and exit 2. The invalid run
+`20260911T074715Z-42b890ce` was retained.
+
+The release has **59 passing local unit tests**, covering boot-before-launch,
+cross-level session identity, internal mismatch rejection, sealed initialization
+failures and legacy evidence rejection in addition to the existing checks.
+These are finite smoke tests, not a five-level win-rate certification. Levels
+4–6 had startup checks only; native Windows/Linux gameplay was not rerun here.
+
+## Original V4 result (historical labels; difficulty pending revalidation)
+
+The original project used the same frozen V4 strategy across native difficulty 3 (Normal) through 7 (Hardest), with Ken in MAME 0.288's `sf2` World 910522. Each labelled level finished with five consecutive natural-coin clears under the original DIP-only checks. Root reviewed the relevant selection, terminal result, and ending evidence in that original macOS environment.
 
 | Difficulty | Cumulative clears / attempts | Final consecutive clears | Round W/L/D |
 |---|---:|---:|---:|
@@ -32,7 +90,7 @@ These identify historical inputs, not an assertion that every file in this stand
 
 The original local audit was stored at `MAME/training/coin22/staged/v4-final-report/report.md` and `report.json` in the development archive. Those logs, images, ROMs, states, and emulator binaries are not distributed with this standalone package. The original machine retained `Play_Games` as a compatibility symlink after the project directory was renamed; a fresh installation does not need that path or symlink.
 
-## Standalone port
+## Standalone port (original 0.1.0 checks)
 
 ### Local release smoke tests — 2026-09-11
 

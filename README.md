@@ -6,9 +6,14 @@
 
 *AI-generated project illustration.*
 
+**Difficulty correction in 0.1.1:** the previous startup flow could leave SF2
+using Normal despite a different DIP readback. Difficulty is now configured
+before boot and verified in game RAM. Historical cross-difficulty claims need
+revalidation. See [diagnosis and evidence rules](docs/difficulty-fix.md).
+
 Play **Street Fighter II: The World Warrior (World 910522)** as Ken with a fixed Lua policy and a Python command-line runner. Gameplay runs locally in MAME; it needs no AI model, API key, or online service.
 
-The runner uses ordinary player-one controls and current game state. Each verification starts an isolated session, then uses natural game completion and coin insertion between attempts. It does not load states, continue a defeated game, reset between attempts, or pause inside a match to change its policy.
+The runner uses ordinary player-one controls and current game state. Each difficulty boots an isolated, preconfigured session, then uses natural game completion and coin insertion between attempts at that level. It does not load states, continue a defeated game, reset between attempts, or pause inside a match to change its policy.
 
 **Required:** Python 3.10+ and **MAME 0.288**, installed separately, plus your own compatible `sf2` ROM set. MAME, ROMs, save states, screenshots, and historical run logs are not included in the package. See [installation](docs/installation.md) for official download links.
 
@@ -73,7 +78,7 @@ This project began on **September 8, 2026**, with a simple request: find MAME fo
 1. **Learn to play.** Observe positions, HP and actions; build frame-timed Lua inputs and record useful patterns in reusable Agent instructions.
 2. **Train the weak matchups.** Use opening save states for practice, record every round's result, and repeatedly improve difficult opponents such as Honda, Blanka, Vega, Sagat and Bison. Subagents helped analyze failures and improve the training tools.
 3. **Tighten verification.** Separate training from play: no state loads, continues, or pauses inside a whole opponent match. Replace reset-based testing with natural game completion and new coin insertion to encounter a wider range of openings.
-4. **Freeze and validate V4.** Test the same selected strategy from Normal (3) through Hardest (7), preserving failures. Each difficulty ultimately finished with **five consecutive natural-coin clears**. The final V4 campaign recorded **45 clears in 55 attempts (81.8%)**, with **1,114 round wins, 96 losses and 3 draws**. These counts describe that campaign, not every earlier training run or a guaranteed future win rate.
+4. **Freeze and validate V4.** Test the same selected strategy from Normal (3) through Hardest (7), preserving failures. Each labelled difficulty ultimately finished with **five consecutive natural-coin clears** under the old DIP-only checks; internal difficulty was not certified. The final V4 campaign recorded **45 clears in 55 attempts (81.8%)**, with **1,114 round wins, 96 losses and 3 draws**. These counts describe that campaign, not every earlier training run or a guaranteed future win rate.
 5. **Make it reproducible.** Preserve the frozen fighter/core/selection files, then package the runner as a Git project with a standalone CLI, installation scripts, Agent handoff instructions and auditable reports. Gameplay now runs without an AI model.
 
 The standalone runner is a separate port; historical results do not certify another OS or emulator build. Details and frozen source identities are in [validation history](docs/validation.md).

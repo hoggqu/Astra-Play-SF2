@@ -6,11 +6,13 @@ adversarial signature scheme, and a named review is not an authenticated identit
 from __future__ import annotations
 
 import collections
+import copy
 import datetime
 import hashlib
 import html
 import json
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
@@ -20,7 +22,8 @@ NAMES = {0: 'Ryu', 1: 'E. Honda', 2: 'Blanka', 3: 'Guile', 5: 'Chun-Li',
          10: 'Balrog', 11: 'Vega'}
 KEYS = {'U', 'D', 'L', 'R', 'LP', 'MP', 'HP', 'LK', 'MK', 'HK'}
 OUTCOMES = ('win', 'loss', 'draw')
-TRACE_COLUMNS = {'frame', 'round', 'phase', 'timer', 'timer_raw', 'emulated_seconds',
+DIFFICULTY_COLUMNS = {'difficulty_bits', 'difficulty_mirror', 'effective_difficulty'}
+TRACE_COLUMNS = DIFFICULTY_COLUMNS | {'frame', 'round', 'phase', 'timer', 'timer_raw', 'emulated_seconds',
                  'preceding_input', 'preceding_decision', 'issued_input'} | {
                      f'p{i}_{field}' for i in (1, 2) for field in
                      ('x', 'y', 'hp', 'displayed_hp', 'timeout_hp', 'action', 'anim', 'wins')}
@@ -98,7 +101,25 @@ def _draw(s, stop, trace, previous, stop_frame, end_frame):
     return False
 
 
-def _match(run, relative, level, selection, speed, needed):
+def _difficulty_state(state, level):
+    _require(all(type(state.get(k)) is int and state[k] == value for k, value in
+                 (('difficulty_bits', 7-level), ('difficulty_mirror', level),
+                  ('effective_difficulty', level))), 'Difficulty unverified: internal/DIP reading differs')
+
+
+def _snapshot_difficulties(value, level):
+    if isinstance(value, dict):
+        if 'p1' in value and 'p2' in value:
+            _difficulty_state(value, level)
+        for child in value.values():
+            _snapshot_difficulties(child, level)
+    elif isinstance(value, list):
+        for child in value:
+            if isinstance(child, (dict, list)):
+                _snapshot_difficulties(child, level)
+
+
+def _match(run, relative, level, selection, speed, needed, verify_difficulty=True):
     path = _path(run, relative)
     status_rel = str(Path(relative).with_name(Path(relative).stem + '-status.json')).replace('\\', '/')
     policy_rel = str(Path(relative).with_name(Path(relative).stem + '-policy.lua')).replace('\\', '/')
@@ -111,6 +132,11 @@ def _match(run, relative, level, selection, speed, needed):
     _require(s['loads'] == s['saves'] == s['pauses_during_match'] == 0, 'Match lifecycle violation')
     _require(s.get('resets', 0) == 0 and s.get('continues', 0) == 0, 'Match reset/continue')
     _require(s['difficulty_bits'] == 7-level and s['difficulty_checks'] == s['frame'], 'Difficulty/frame checks differ')
+    if verify_difficulty:
+        _require(s.get('effective_difficulty') == level
+                 and s.get('effective_difficulty_checks') == s['frame'],
+                 'Difficulty unverified: internal frame checks differ')
+        _snapshot_difficulties({key: value for key, value in raw.items() if key != 'trace'}, level)
     _require(s['speed'] == speed, 'Speed differs from manifest')
     op = s['opponent']
     _require(op in OPS and s['mode'] == selection[str(op)], 'Wrong selected mode/opponent')
@@ -120,13 +146,16 @@ def _match(run, relative, level, selection, speed, needed):
     _require(not raw['telemetry_error'] and not s['telemetry_error'] and s['diagnostic_level'] == 'full', 'Telemetry incomplete')
     _require(trace['all_frames'] is True and trace['all_decisions'] is True, 'Full trace flags missing')
     _require(len(trace['columns']) == len(set(trace['columns'])), 'Duplicate trace columns')
-    _require(TRACE_COLUMNS <= set(trace['columns']), 'Required trace columns missing')
+    required_columns = TRACE_COLUMNS if verify_difficulty else TRACE_COLUMNS-DIFFICULTY_COLUMNS
+    _require(required_columns <= set(trace['columns']), 'Required trace columns missing')
     _require(len(trace['rows']) == s['frame'] == s['trace_frames'] == trace['observed_frames'], 'Trace frame count differs')
     rows = []
     for frame, values in enumerate(trace['rows'], 1):
         _require(len(values) == len(trace['columns']), 'Truncated trace row')
         r = dict(zip(trace['columns'], values))
         _require(r['frame'] == frame, 'Noncontiguous trace')
+        if verify_difficulty:
+            _difficulty_state(r, level)
         for key in ('preceding_input', 'issued_input'):
             text = r[key]
             _require(text is False or (isinstance(text, str) and set(text.split()) <= KEYS), 'Forbidden trace input')
@@ -178,6 +207,13 @@ def _inspect(run):
     errors, audited = [], []
     needed = {'run.json'}
     manifest = _read(run/'run.json')
+    if manifest.get('schema') == 'astra.batch.v1':
+        return _inspect_batch(run, manifest)
+    schema = manifest.get('schema')
+    _require(schema in ('astra.run.v1', 'astra.run.v2'), 'Unsupported run schema')
+    verify_difficulty = schema == 'astra.run.v2'
+    if not verify_difficulty:
+        errors.append('Difficulty unverified: legacy astra.run.v1 lacks game-internal difficulty evidence')
     if manifest['status'] != 'complete':
         errors.append('Run is not complete')
     runtime = manifest['runtime_sha256']
@@ -192,6 +228,12 @@ def _inspect(run):
     _require(set(map(int, selection)) == OPS, 'Selection must cover eleven opponents')
     levels = manifest['difficulty']
     _require(isinstance(levels, list) and levels and len(set(levels)) == len(levels) and all(type(n) is int and 3 <= n <= 7 for n in levels), 'Invalid difficulty list')
+    if verify_difficulty:
+        _require(len(levels) == 1, 'A v2 session must contain exactly one fixed difficulty')
+        try:
+            _boot_difficulty(run, manifest, levels[0], needed)
+        except (KeyError, ValueError, TypeError, OSError, ET.ParseError) as exc:
+            errors.append('Difficulty unverified: '+str(exc))
     attempts = manifest['attempts']
     _require(len({a['id'] for a in attempts}) == len(attempts), 'Duplicate attempt IDs')
     requested = manifest['attempts_requested']
@@ -222,7 +264,7 @@ def _inspect(run):
             _require(attempt['outcome'] in ('gameplay_clear', 'loss'), 'Invalid attempt cannot certify')
             _require(len(set(attempt['matches'])) == len(attempt['matches']), 'Duplicate match paths')
             for relative in attempt['matches']:
-                row['matches'].append(_match(run, relative, level, selection, manifest['speed'], needed))
+                row['matches'].append(_match(run, relative, level, selection, manifest['speed'], needed, verify_difficulty))
             matches = row['matches']; route = [m['opponent'] for m in matches]
             _require(route and len(route) == len(set(route)) and len(route) <= 11, 'Invalid route')
             _require(set(route[:7]) <= (OPS-{8, 9, 10, 11}) and route[7:] == [10, 11, 9, 8][:max(0, len(route)-7)], 'Route is not native fighters then bosses')
@@ -260,6 +302,11 @@ def _inspect(run):
             sequence.append(event)
         if not all([e['event'] for e in seq] == ['prepared', 'accepted', 'completed'] for seq in groups.values()):
             errors.append('Unfinished/duplicate command event sequence')
+    _check_seal(run, needed, errors)
+    return manifest, audited, errors
+
+
+def _check_seal(run, needed, errors):
     try:
         seal = _read(run/'evidence-sha256.json')['files']
         _require(needed <= set(seal), 'Evidence seal omits required files: '+', '.join(sorted(needed-set(seal))))
@@ -267,6 +314,97 @@ def _inspect(run):
             _require(_sha(_path(run, rel)) == digest, 'Sealed evidence changed: '+rel)
     except (KeyError, ValueError, TypeError, OSError) as exc:
         errors.append(str(exc))
+
+
+def _boot_difficulty(run, manifest, level, needed):
+    settings = 'training/runtime/settings.lua'
+    needed.add(settings)
+    _require('settings.lua' in manifest['runtime_sha256'], 'Runtime identity omits settings.lua')
+    expected = f"astra_difficulty_bits={7-level}\nastra_difficulty_label='{level}'\n"
+    _require(_path(run, settings).read_text(encoding='utf-8') == expected,
+             'Runtime settings.lua difficulty differs')
+    relative = manifest['boot_observation']
+    _require(relative == 'training/boot-observation.json', 'Unexpected boot observation path')
+    needed.update(('boot-config.xml', relative))
+    config = run/'boot-config.xml'
+    _require(_sha(config) == manifest['boot_config_sha256'], 'Boot configuration SHA differs')
+    root = ET.parse(config).getroot()
+    _require(root.tag == 'mameconfig' and root.get('version') == '10', 'Invalid boot configuration root')
+    systems = root.findall('system')
+    _require(len(systems) == 1 and systems[0].get('name') == 'sf2', 'Wrong boot configuration system')
+    ports = [p for p in systems[0].findall('input/port') if p.get('tag') == ':DSWB'
+             and p.get('type') == 'DIPSWITCH' and int(p.get('mask', '0'), 0) & 7]
+    _require(len(ports) == 1 and int(ports[0].get('mask', '0'), 0) == 7
+             and int(ports[0].get('defvalue', '-1'), 0) == 4
+             and int(ports[0].get('value', '-1'), 0) == 7-level,
+             'Boot configuration Difficulty port differs')
+    _difficulty_state(_read(_path(run, relative)), level)
+
+
+def _rebase_attempt(attempt, prefix):
+    result = copy.deepcopy(attempt)
+    result['matches'] = [prefix+'/'+p for p in result.get('matches', [])]
+    if result.get('lifecycle'):
+        result['lifecycle'] = prefix+'/'+result['lifecycle']
+    images = result.get('images', {})
+    for name in ('selection', 'bison'):
+        if images.get(name):
+            images[name] = prefix+'/'+images[name]
+    if 'ending' in images:
+        images['ending'] = [prefix+'/'+p for p in images['ending']]
+    return result
+
+
+def _inspect_batch(run, manifest):
+    errors, audited, combined = [], [], []
+    needed = {'run.json'}
+    if manifest['status'] != 'complete':
+        errors.append('Batch is not complete')
+    levels = manifest['difficulty']
+    _require(isinstance(levels, list) and len(levels) > 1 and len(set(levels)) == len(levels)
+             and all(type(n) is int and 3 <= n <= 7 for n in levels), 'Invalid batch difficulty list')
+    sessions = manifest['sessions']
+    _require(isinstance(sessions, list), 'Invalid session list')
+    seen = []
+    shared_runtime = None
+    for session in sessions:
+        level, relative = session['difficulty'], session['path']
+        _require(level in levels and level not in seen and relative == f'sessions/l{level}',
+                 'Duplicate/unplanned batch session or path')
+        seen.append(level)
+        needed.update((relative+'/run.json', relative+'/evidence-sha256.json'))
+        try:
+            child_dir = _path(run, relative)
+            child = _read(child_dir/'run.json')
+            _require(child.get('schema') == 'astra.run.v2', 'Batch child is not a v2 single session')
+            _require(child['difficulty'] == [level], 'Batch session difficulty differs')
+            for key in ('version', 'mame_version', 'rom', 'policy_sha256', 'attempts_requested', 'consecutive', 'speed'):
+                _require(key in child and key in manifest and child[key] == manifest[key],
+                         'Batch session '+key+' differs or is missing')
+            runtime = {name: digest for name, digest in child['runtime_sha256'].items()
+                       if name != 'settings.lua'}
+            if shared_runtime is None:
+                shared_runtime = runtime
+            else:
+                _require(runtime == shared_runtime,
+                         'Batch session runtime identity differs outside settings.lua')
+            _, child_attempts, child_errors = _inspect(child_dir)
+            errors.extend(relative+': '+e for e in child_errors)
+            combined.extend(_rebase_attempt(a, relative) for a in child['attempts'])
+            for attempt in child_attempts:
+                row = copy.deepcopy(attempt)
+                for match in row['matches']:
+                    match['log'] = relative+'/'+match['log']
+                if 'images' in row:
+                    row['images'] = _rebase_attempt({'images': row['images']}, relative)['images']
+                audited.append(row)
+        except (KeyError, ValueError, TypeError, OSError) as exc:
+            errors.append(relative+': '+str(exc))
+    if seen != levels:
+        errors.append('Incomplete or out-of-order difficulty sessions')
+    if manifest['attempts'] != combined:
+        errors.append('Batch attempts differ from complete rebased child manifests')
+    _check_seal(run, needed, errors)
     return manifest, audited, errors
 
 
@@ -274,9 +412,10 @@ def audit_run(run: Path) -> dict:
     """Return structured audit failures; never modifies a run."""
     try:
         _, attempts, errors = _inspect(run)
-        return {'ok': not errors, 'errors': errors, 'attempts': attempts}
+        return {'ok': not errors, 'errors': errors, 'attempts': attempts,
+                'difficulty_verified': not errors}
     except (KeyError, ValueError, TypeError, OSError) as exc:
-        return {'ok': False, 'errors': [str(exc)], 'attempts': []}
+        return {'ok': False, 'errors': [str(exc)], 'attempts': [], 'difficulty_verified': False}
 
 
 def record_review(run: Path, attempt_id: str, reviewer: str, decision: str) -> dict:
@@ -313,7 +452,8 @@ def _difficulty_totals(manifest, audit):
             best = max(best, streak)
         count = len(attempts)
         result[str(level)] = {
-            'difficulty': level, 'attempts_started': count,
+            'difficulty': level, 'difficulty_verification': 'verified' if audit['ok'] else 'unverified',
+            'attempts_started': count,
             'gameplay_clears': counts['gameplay_clear'], 'losses': counts['loss'],
             'invalids': counts['invalid'],
             'pending_or_other': count-counts['gameplay_clear']-counts['loss']-counts['invalid'],
@@ -358,10 +498,12 @@ def write_report(run: Path) -> dict:
               'attempts_started': count, 'gameplay_clears_audited': valid_clears, 'reviewer_approved_clears': approved,
               'clear_rate': valid_clears/count if count else None, 'rounds': dict(stats), 'opponents': opponents,
               'clear_rate_denominator': count, 'difficulties': difficulties,
+              'difficulty_verification': 'verified' if audit['difficulty_verified'] else 'unverified',
               'round_stats_basis': 'sealed audited results' if audit['ok'] else 'provisional completed-match statistics; run integrity not certified',
               'reviews': reviews, 'limitations': 'Local integrity checks, not adversarial proof. Gameplay result is separate from a named visual-review assertion; finite success is not a true win-rate guarantee.'}
     lines = ['# Astra-Play-SF2 report', '', f"Audit: {'PASS' if audit['ok'] else 'NOT VERIFIED'}", '',
              f'Audited gameplay clears: {valid_clears}/{count}. Reviewer-approved clears: {approved}.',
+             'Difficulty: '+report['difficulty_verification']+'.',
              f"Rounds: {stats['win']}W {stats['loss']}L {stats['draw']}D.", '']
     level_lines = ['| Difficulty | Clears/started | Losses | Invalid | Pending | Clear rate | Max/final streak |',
                    '|---|---:|---:|---:|---:|---:|---:|']

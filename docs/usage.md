@@ -23,11 +23,17 @@ astra-sf2 verify --difficulty 7 --attempts 5 --speed fast
 astra-sf2 verify --difficulty all --attempts 20 --consecutive 5 --speed fast
 ```
 
-A fresh `verify` creates a new session and run directory. `--attempts N` is a maximum per requested difficulty. `--consecutive N` ends a level early after that many consecutive automatic gameplay clears; every failure is retained and breaks the streak. When the cap is reached without the requested streak, the record remains unsuccessful rather than manufacturing more attempts. Audit failures and incomplete runs are not clears.
+A fresh `verify` creates a new run directory and one preconfigured MAME session per requested difficulty. `--attempts N` is a maximum per requested difficulty. `--consecutive N` ends a level early after that many consecutive automatic gameplay clears; every failure is retained and breaks the streak. When the cap is reached without the requested streak, the record remains unsuccessful rather than manufacturing more attempts. Audit failures and incomplete runs are not clears.
 
-Without `--consecutive`, the runner uses the requested bounded attempt count. The speed is chosen before play. A failed game is allowed to finish naturally before a new coin; no continue, soft reset, hard reset, or state restoration substitutes for that transition. Difficulty changes between levels follow the runner's setup flow, not a mid-match strategy intervention.
+Without `--consecutive`, the runner uses the requested bounded attempt count. The speed is chosen before play. A failed game is allowed to finish naturally before a new coin; no continue, soft reset, hard reset, or state restoration substitutes for that transition. Each level boots a separate preconfigured process. All attempts within that level share it; a loss does not restart the emulator.
 
 Do not start another runner, attach a second input sender, reload Lua, alter policy files, or pause a live match. If you stop the process or something fails, retain the run and audit it; do not splice successful fragments into a complete attempt. A later command starts a new session rather than repairing the old record into a win.
+
+A single-level run uses `astra.run.v2`. For `--difficulty all`, the root report
+combines the five child directories `sessions/l3` through `sessions/l7`.
+`audit`, `report` and `review` accept the root run directory and the usual attempt
+IDs. Startup prints requested difficulty, raw DIP bits, and game-internal level;
+for difficulty 7 the expected values are `7`, `0`, and `7`.
 
 ## Exit status
 
@@ -55,6 +61,7 @@ The same commands serve human users and agents. No AI is called to choose moves,
 - **ROM audit failure:** correct your local ROM files using MAME's diagnostic output. A filename alone does not establish compatibility.
 - **Session already owned:** inspect the existing runner. Do not remove a live ownership lock or start a second input sender to make progress.
 - **Incomplete evidence or interrupted run:** preserve the directory and use `audit`. Start a fresh session only after the existing owner has stopped; never report partial progress as a clear.
+- **Difficulty mismatch or legacy evidence:** upgrade to 0.1.1 and start a new run. Do not override a mismatch. Old v1 runs remain readable but cannot certify internal difficulty; see [the correction](difficulty-fix.md).
 - **Review pending:** automatic gameplay can finish without an offline reviewer. Report it as such, or inspect the evidence and explicitly record a review; do not fabricate an approval.
 
 This port's runs are independent of completed historical V4 IDs, bootstrap instances, and local compatibility paths. Do not use legacy training controllers as substitutes for this CLI.

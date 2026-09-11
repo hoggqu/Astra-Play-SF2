@@ -8,7 +8,8 @@ layer calls an AI service. A reviewer can inspect screenshots after the run.
 
 ```text
 configure → doctor → unique run directory → isolated MAME process
-  → autoboot Lua modules → latch/read native DIP → wait for native attract
+  → preconfigured native DIP at boot → Lua checks DIP and decoded RAM difficulty
+  → wait for native attract
   → coin/start/Ken selection → validate live R1 → play_match
   → mature match settlement → next opponent / bonus stage
   → defeat: retain loss and let continue countdown expire
@@ -37,7 +38,8 @@ interrupting an owned process invalidates incomplete work.
 | `transport.py` | Single-writer inbox, command log, no-replay waits |
 | `opening.py` | Strict live R1 or narrowly recognized uninitialized-intro predicates |
 | `assets/bootstrap.lua` | Noninteractive module loading and capability checks |
-| `assets/session.lua` | Native reset/load/save counters and between-attempt DIP changes |
+| `assets/difficulty.lua` | Read-only DIP, game mirror, decoded difficulty and AI diagnostic fields |
+| `assets/session.lua` | Native reset/load/save counters and fixed-difficulty session checks |
 | `assets/control.lua`, `bridge.lua`, `observe.lua` | Ordinary input jobs, guarded inbox and current-state snapshots |
 | `assets/fighter.lua` | Frozen V4 policy and current fighter reads |
 | `assets/play_core.lua` | Frozen pure whole-match/round state machine |
@@ -60,6 +62,8 @@ This address map is for **MAME 0.288, `sf2`, World 910522 only**. For player ind
 | `+0x1bc`, `+0x164` | Displayed HP and timeout HP |
 | `0xff8ace` | BCD round timer |
 | I/O port `:DSWB & 7` | Difficulty bits: `7 - CLI difficulty` |
+| `0xff808b & 7` | Inverted DIP B mirror, equals CLI difficulty |
+| `0xff82c6` (16-bit) | Game-decoded difficulty, equals CLI difficulty |
 
 Lua uses `manager.machine.devices[':maincpu'].spaces['program']` for reads.
 PNG screenshots are paired with observation JSON for review; they are not the
@@ -82,7 +86,17 @@ Develop new strategies in a separately versioned experiment. Do not edit a
 verification run, replace its copied runtime or splice together successful
 matches. Existing reports should remain attributable to their original inputs.
 
-The first machine boot is allowed. Native difficulty fields latch on a frame
-update, so changing DIP is followed by two neutral frames outside an attempt
-and a readback check. There is no reset to apply difficulty. Within a match,
-changing DIP, speed, policy or lifecycle state invalidates the result.
+Native DIP is written to the isolated `cfg/sf2.cfg` before process launch. The
+initial XML is preserved as `boot-config.xml`, because MAME can rewrite CFG on
+exit. The bootstrap validates both native DIP and decoded RAM difficulty;
+matching the port alone does not prove the game consumed a changed setting.
+
+Each difficulty has its own process and working directory. A single-level run
+uses `astra.run.v2`; a multi-level `astra.batch.v1` contains sequential child
+sessions at `sessions/l3` through `sessions/l7` and a combined report. Attempts
+within a level retain the same process and natural coin sequence. Policy/runtime
+hashes must agree across children except the per-level `settings.lua`.
+
+There is no in-session difficulty change. The adapter passively checks internal
+difficulty every Core tick alongside DIP, speed and lifecycle checks. See the
+[difficulty correction](difficulty-fix.md) for the diagnosis and legacy evidence limits.

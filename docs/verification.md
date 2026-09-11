@@ -8,6 +8,19 @@ The Python runner arranges the session, records outcomes, and advances through n
 
 Native health, timer, round-win markers, and settled state are evidence together. Zero HP or a stopped timer alone is not a win. Damage can occur between the timer stopping and native score locking, or after a result has already locked; an audit must not replace the native result with a later live-health comparison.
 
+## Difficulty is part of the evidence
+
+From 0.1.1, native DIP is configured before boot. A valid run records the boot
+configuration and checks both DIP and game-decoded difficulty at startup, before
+a match and every Core tick. Each requested difficulty boots a separate session;
+attempts within that level use the same process and natural coin insertion.
+The multi-level root audit verifies all child sessions and their shared runtime.
+
+Legacy `astra.run.v1` files do not contain internal difficulty evidence. Their
+results remain readable as provisional history, but the new audit will not
+certify them or accept a new visual approval as a substitute for missing
+measurements. See [the difficulty correction](difficulty-fix.md).
+
 ## Optional visual review
 
 The automatic result and visual review answer different questions:

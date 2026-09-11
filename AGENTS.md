@@ -7,6 +7,8 @@ model is not part of its runtime. Use the same commands as a human operator.
 
 1. Read [README](README.md), [installation](docs/installation.md), and
    [verification rules](docs/verification.md).
+   Read the [0.1.1 difficulty correction](docs/difficulty-fix.md): historical DIP-only
+   cross-difficulty results are pending revalidation, not current certification.
 2. Install with `scripts/bootstrap.sh` (macOS/Linux) or `scripts/bootstrap.ps1`
    (Windows). Python 3.10+ and MAME **0.288** are required.
 3. Find an existing MAME 0.288 executable and compatible `sf2` ROM directory.
@@ -73,7 +75,9 @@ Project-local commands and the ROM compatibility requirement are detailed in
 
 ## Verification contract
 
-- One CLI owns one MAME process and inbox. Never attach another sender. The data
+- One CLI owns at most one MAME process and inbox at a time. Each difficulty
+  boots a separate preconfigured session; attempts within that level share the
+  same process and use natural coin insertion. Never attach another sender. The data
   directory has `verify.lock`; inspect its PID and process before removing a
   stale lock. Never remove a live lock or kill another controller.
 - Let the CLI finish. It inserts a new coin after the native game ends. No
@@ -92,6 +96,10 @@ Project-local commands and the ROM compatibility requirement are detailed in
   2: setup/control/audit failure.
 - The Lua policy reads current-state RAM and issues ordinary P1 button inputs.
   It never writes game RAM. All-frame traces and lifecycle audits are retained.
+- Configure native DIP before process launch. Check both the port and the game's
+  decoded difficulty word at `0xFF82C6` before play and throughout each match.
+  Never bypass a mismatch or patch RAM to make it pass. Legacy v1 evidence lacks
+  this check and cannot certify a difficulty; preserve it as provisional history.
 
 ## Development
 

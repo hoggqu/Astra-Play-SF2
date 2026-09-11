@@ -7,7 +7,8 @@ local ok,err=xpcall(function()
  assert(m.ioport.ports[':DSWB'].fields['Difficulty'])
  train_busy=function() return false end
  assert(loadfile('training/runtime/settings.lua'))()
- m.ioport.ports[':DSWB'].fields['Difficulty'].user_value=astra_difficulty_bits
+ assert(loadfile('training/runtime/difficulty.lua'))()
+ astra_difficulty.check(7-astra_difficulty_bits)
  for _,name in ipairs({'control','fighter','observe','play','bridge','session'}) do
   assert(loadfile('training/runtime/'..name..'.lua'))()
  end

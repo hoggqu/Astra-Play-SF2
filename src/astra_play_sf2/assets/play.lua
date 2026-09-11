@@ -13,12 +13,12 @@ local function copy(v)
  if type(v)~='table' then return v end
  local t={};for k,x in pairs(v) do t[k]=copy(x) end;return t
 end
-local columns={'frame','round','phase','timer','p1_x','p1_y','p1_hp','p1_displayed_hp','p1_timeout_hp','p1_action','p1_anim','p1_wins','p2_x','p2_y','p2_hp','p2_displayed_hp','p2_timeout_hp','p2_action','p2_anim','p2_wins','preceding_input','preceding_decision','timer_raw','emulated_seconds','issued_input'}
+local columns={'frame','round','phase','timer','p1_x','p1_y','p1_hp','p1_displayed_hp','p1_timeout_hp','p1_action','p1_anim','p1_wins','p2_x','p2_y','p2_hp','p2_displayed_hp','p2_timeout_hp','p2_action','p2_anim','p2_wins','preceding_input','preceding_decision','timer_raw','emulated_seconds','issued_input','difficulty_bits','difficulty_mirror','effective_difficulty'}
 function Recorder.new()return setmetatable({rows={},decisions={},decision_id=0,last_input='',observed=0},Recorder)end
 function Recorder:before(frame,round,phase,s)
  assert(frame==self.observed+1 and frame<=36001,'Full recorder frame sequence/bound')
  local a,b=s.p1,s.p2
- local row={frame,round,phase,s.timer,a.x,a.y,a.hp,a.displayed_hp,a.timeout_hp,a.a,a.anim,a.wins,b.x,b.y,b.hp,b.displayed_hp,b.timeout_hp,b.a,b.anim,b.wins,self.last_input,self.decision_id,s.timer_raw or false,s.emulated_seconds or false,false}
+ local row={frame,round,phase,s.timer,a.x,a.y,a.hp,a.displayed_hp,a.timeout_hp,a.a,a.anim,a.wins,b.x,b.y,b.hp,b.displayed_hp,b.timeout_hp,b.a,b.anim,b.wins,self.last_input,self.decision_id,s.timer_raw or false,s.emulated_seconds or false,false,s.difficulty_bits,s.difficulty_mirror,s.effective_difficulty}
  self.rows[#self.rows+1]=row;self.row=row;self.observed=frame
 end
 function Recorder:decision(frame,round,a,b,mode,seq,reason)
@@ -93,7 +93,8 @@ local function snapshot_state()
   p.wins=mem:read_u8(base+0x290)
   p.displayed_hp=mem:read_i16(base+0x1bc);p.timeout_hp=mem:read_i16(base+0x164)
  end
- s.emulated_seconds=m.time:as_double();s.difficulty_bits=m.ioport.ports[':DSWB']:read()&7
+ s.emulated_seconds=m.time:as_double()
+ for k,v in pairs(astra_difficulty.read()) do s[k]=v end
  return s
 end
 local function view(r)
@@ -101,6 +102,7 @@ local function view(r)
   prefix=r.prefix,opponent=r.opponent,mode=r.core.mode,phase=r.core.phase,
   frame=r.core.frame,round=r.core.round,score=r.core.score,timeout_guard=r.core.timeout_guard,
   difficulty_bits=r.difficulty_bits,difficulty_label=astra_difficulty_label,difficulty_checks=r.difficulty_checks,
+  effective_difficulty=r.effective_difficulty,effective_difficulty_checks=r.effective_difficulty_checks,
   normal_speed=r.normal_speed,speed=r.speed,pauses_during_match=r.pauses,loads=r.loads,saves=r.saves,
   valid_continuous=r.valid and r.status=='complete',result=r.result,reason=r.reason,
   training_validation=r.training_validation,latest=r.latest,
@@ -184,7 +186,8 @@ local function start_match(prefix,opponent,options)
   and play_guarded_bridge_version==1,'Load the guarded control/fighter/bridge modules first')
  assert(not active and not (bot or job or advance or loadwatch or savewatch),'Controller busy')
  assert(m.paused,'Start at a reviewed R1 opening before unpausing')
- assert(m.system.name=='sf2' and (m.ioport.ports[':DSWB']:read()&7)==astra_difficulty_bits,'Expected sf2 World 910522 / 7 (Hardest)')
+ assert(m.system.name=='sf2','Expected sf2 World 910522')
+ astra_difficulty.check(7-astra_difficulty_bits)
  assert(type(prefix)=='string' and prefix:match('^training/[%w_/%-]+$'),'Use a fresh path under training/')
  for _,suffix in ipairs({'-status.json','.json','-policy.lua','-status.json.tmp','.json.tmp'}) do
   local f=io.open(prefix..suffix,'r');if f then f:close();error('Play prefix already exists') end
@@ -196,7 +199,7 @@ local function start_match(prefix,opponent,options)
  local opening=snapshot_state()
  local policy=choose
  local r={prefix=prefix,opponent=opponent,status='running',valid=true,pauses=0,loads=0,saves=0,
-  difficulty_bits=astra_difficulty_bits,dip_port_value=m.ioport.ports[':DSWB']:read(),difficulty_checks=0,
+  difficulty_bits=astra_difficulty_bits,dip_port_value=m.ioport.ports[':DSWB']:read(),difficulty_checks=0,effective_difficulty=7-astra_difficulty_bits,effective_difficulty_checks=0,
   normal_speed=selected_speed=='normal',speed=selected_speed,events={},settlement_trace={},latest=opening,training_validation=options.training_validation==true,
   policy=policy,fighter=fighter,keys=keys,release=release,sources={},recorder=Recorder.new()}
  local function traced_policy(a,b,selected)
@@ -206,7 +209,7 @@ local function start_match(prefix,opponent,options)
  end
  r.core=Core.new({mode=modes[opponent],opponent=opponent,choose=traced_policy,lead=opponent==8 and 2 or 0,timeout_guard=timeout_guards[opponent]},opening)
  local ok,err=pcall(function()
-  for _,path in ipairs({'training/runtime/fighter.lua','training/runtime/play_core.lua','training/runtime/play.lua'}) do
+  for _,path in ipairs({'training/runtime/fighter.lua','training/runtime/play_core.lua','training/runtime/play.lua','training/runtime/difficulty.lua','training/runtime/settings.lua'}) do
    r.sources[path]=readfile(path)
   end
   local policy_file=assert(io.open(prefix..'-policy.lua','wb'))
@@ -255,6 +258,8 @@ play_frame_subscription=emu.add_machine_frame_notifier(function()
   r.difficulty_checks=r.difficulty_checks+1
   if m.ioport.ports[':DSWB']:read()~=r.dip_port_value then return finish({valid=false,reason='DIP settings changed during match'}) end
   r.latest=snapshot_state()
+  astra_difficulty.check(r.effective_difficulty,r.latest)
+  r.effective_difficulty_checks=r.effective_difficulty_checks+1
   if r.core.phase=='settling' or r.latest.timer==0 then
    r.settlement_trace[#r.settlement_trace+1]={frame=r.core.frame+1,round=r.core.round,phase=r.core.phase,state=r.latest}
   end

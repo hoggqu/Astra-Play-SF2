@@ -11,6 +11,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from astra_play_sf2 import cli, config, runner, transport
+from astra_play_sf2.opening import make_opening_guard, require_difficulty
+import xml.etree.ElementTree as ET
 
 
 class TemporaryCase(unittest.TestCase):
@@ -352,6 +354,8 @@ class RuntimeTests(TemporaryCase):
             self.assertNotIn("shell", kwargs)
             self.assertEqual(Path(kwargs["cwd"]).parent, Path(value["data_dir"]) / "runs")
             self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+            cfg = ET.parse(Path(kwargs["cwd"]) / "cfg/sf2.cfg").find("./system/input/port")
+            self.assertEqual(cfg.attrib["value"], "4")
             launches.append(kwargs)
             return process
         with patch.object(runner, "doctor", return_value={"ok": True}), \
@@ -380,7 +384,8 @@ class RuntimeTests(TemporaryCase):
         process = Mock()
         process.poll.return_value = None
         bridge = Mock()
-        bridge.send.side_effect = [{"difficulty_bits": 4}, {"difficulty_bits": 0}]
+        bridge.send.side_effect = [{"difficulty_bits": 4, "difficulty_mirror": 3, "effective_difficulty": 3},
+                                   {"difficulty_bits": 0, "difficulty_mirror": 7, "effective_difficulty": 7}]
         played = []
         def attempt(run, bridge, record, speed, save):
             played.append(record["id"])
@@ -389,7 +394,7 @@ class RuntimeTests(TemporaryCase):
         with patch.object(runner, "doctor", return_value={"ok": True}), \
              patch.object(runner.platform, "platform", return_value="fixture-platform"), \
              patch.object(runner.platform, "node", return_value="fixture-host"), \
-             patch.object(runner.subprocess, "Popen", return_value=process), \
+             patch.object(runner.subprocess, "Popen", return_value=process) as popen, \
              patch.object(runner, "Bridge", return_value=bridge), \
              patch.object(runner, "_attempt", side_effect=attempt), \
              patch("astra_play_sf2.evidence.audit_run", return_value={"ok": True}), \
@@ -401,15 +406,24 @@ class RuntimeTests(TemporaryCase):
         self.assertEqual(records[0]["outcome"], "loss")
         self.assertEqual(len(records), 5)
         self.assertEqual([call.args[0] for call in bridge.send.call_args_list],
-                         ["session_difficulty(3)", "session_difficulty(7)"])
+                         ["session_validate()", "session_validate()"])
+        self.assertEqual(popen.call_count, 2)
+        self.assertEqual(process.terminate.call_count, 2)
+        self.assertEqual([Path(c.kwargs["cwd"]).relative_to(run).as_posix() for c in popen.call_args_list],
+                         ["sessions/l3", "sessions/l7"])
+        for level in (3, 7):
+            folder = run / f"sessions/l{level}"
+            node = ET.parse(folder / "boot-config.xml").find("./system/input/port")
+            self.assertEqual(node.attrib["value"], str(7-level))
+            self.assertEqual((folder / "boot-config.xml").read_bytes(), (folder / "cfg/sf2.cfg").read_bytes())
 
     def test_unlatched_native_difficulty_aborts_before_attempt_without_retry(self):
         value = {"mame": "fake", "rom_dir": "fake", "data_dir": str(self.root / "data")}
         process = Mock()
         process.poll.return_value = None
         bridge = Mock()
-        # Requested Hardest (bits0), but the refreshed observation is still Normal.
-        bridge.send.return_value = {"difficulty_bits": 4}
+        # DIP says Hardest but the game still uses cached Normal, as reproduced live.
+        bridge.send.return_value = {"difficulty_bits": 0, "difficulty_mirror": 7, "effective_difficulty": 3}
         with patch.object(runner, "doctor", return_value={"ok": True}), \
              patch.object(runner.platform, "platform", return_value="fixture-platform"), \
              patch.object(runner.platform, "node", return_value="fixture-host"), \
@@ -421,15 +435,36 @@ class RuntimeTests(TemporaryCase):
             run, code = runner.verify(value, [7], attempts=3)
         self.assertEqual(code, 2)
         attempt.assert_not_called()
-        bridge.send.assert_called_once_with("session_difficulty(7)")
+        bridge.send.assert_called_once_with("session_validate()")
         launch.assert_called_once()
         process.terminate.assert_called_once()
         manifest = transport.read_json(run / "run.json")
         self.assertEqual(manifest["status"], "invalid")
         self.assertEqual(manifest["attempts"], [])
-        self.assertIn("DIP setting did not latch", manifest["error"])
+        self.assertIn("Difficulty mismatch", manifest["error"])
         self.assertFalse((Path(value["data_dir"]) / "verify.lock").exists())
         self.assertTrue((run / "evidence-sha256.json").exists())
+
+    def test_initialization_failure_is_preserved_without_launch(self):
+        value = {"mame": "fake", "rom_dir": "fake", "data_dir": str(self.root / "data")}
+        for stage in ("stage_runtime", "boot_config"):
+            with self.subTest(stage=stage), \
+                 patch.object(runner, "doctor", return_value={"ok": True}), \
+                 patch.object(runner, stage, side_effect=OSError("fixture initialization failure")), \
+                 patch.object(runner.platform, "platform", return_value="fixture-platform"), \
+                 patch.object(runner.platform, "node", return_value="fixture-host"), \
+                 patch.object(runner.subprocess, "Popen") as launch, \
+                 redirect_stdout(io.StringIO()):
+                run, code = runner.verify(value, [7])
+            self.assertEqual(code, 2)
+            launch.assert_not_called()
+            manifest = transport.read_json(run / "run.json")
+            self.assertEqual(manifest['status'], 'invalid')
+            self.assertIn('fixture initialization failure', manifest['error'])
+            self.assertEqual(manifest['attempts'], [])
+            self.assertTrue((run / 'evidence-sha256.json').exists())
+            self.assertTrue((run / 'report.json').exists())
+            self.assertFalse((Path(value['data_dir']) / 'verify.lock').exists())
 
     def test_invalid_verify_budget_is_rejected_before_any_process(self):
         values = [([], 1, "normal", None), ([2], 1, "normal", None),
@@ -442,6 +477,33 @@ class RuntimeTests(TemporaryCase):
                         runner.verify({}, levels, attempts, speed, consecutive)
         doctor.assert_not_called()
         launch.assert_not_called()
+
+
+class DifficultyOpeningTests(unittest.TestCase):
+    def test_wrong_or_missing_internal_value_cannot_start_or_advance_intro(self):
+        state = {"paused": True, "controller_busy": False, "difficulty_bits": 0,
+                 "difficulty_mirror": 7, "effective_difficulty": 7, "timer_seconds": 99,
+                 "p1": {"character": 4, "hp": 144, "displayed_hp": 144, "round_wins": 0,
+                        "y": 40, "x": 100, "animation": 123},
+                 "p2": {"character": 0, "hp": 144, "displayed_hp": 144, "round_wins": 0,
+                        "y": 40, "x": 200, "animation": 456}}
+        guard = make_opening_guard(0)
+        require_difficulty(state, 7)
+        self.assertTrue(guard[1](state, 0))
+        for value in (3, None, True, "7"):
+            with self.subTest(value=value):
+                state["effective_difficulty"] = value
+                with self.assertRaises(ValueError): require_difficulty(state, 7)
+                advance = Mock()
+                with self.assertRaises(ValueError): guard[3](state, 0, advance)
+                advance.assert_not_called()
+
+    def test_all_five_native_encodings_and_input_mirror(self):
+        for level in range(3, 8):
+            state = dict(difficulty_bits=7-level, difficulty_mirror=level, effective_difficulty=level)
+            require_difficulty(state, level)
+            state['difficulty_mirror'] = 0
+            with self.assertRaises(ValueError): require_difficulty(state, level)
 
 
 class CliTests(unittest.TestCase):
