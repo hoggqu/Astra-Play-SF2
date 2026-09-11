@@ -1,9 +1,28 @@
 from copy import deepcopy
 import unittest
+import json
+from pathlib import Path
+import tempfile
 from lupa.lua54 import LuaRuntime
-from .deterministic_train_eval import HERE,audit,runtime
+from astra_play_sf2.runner import sha256
+from .deterministic_train_eval import HERE,audit,runtime,select_states,ALL_OPPONENTS
 
 class DeterministicTrainEvalTests(unittest.TestCase):
+    def test_dev_selection_does_not_open_train_or_holdout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);rows=[]
+            for opponent in ALL_OPPONENTS:
+                path=root/f'dev-{opponent}.sta';path.write_bytes(str(opponent).encode())
+                rows.append({'opponent':opponent,'split':'dev','status':'accepted','difficulty':3,'path':path.name,'sha256':sha256(path)})
+                for split in ('train','holdout'):
+                    rows.append({'opponent':opponent,'split':split,'path':'must-not-open.sta'})
+            manifest=root/'manifest.json';manifest.write_text(json.dumps({'status':'complete','difficulty':3,'openings':rows}))
+            chosen=select_states(manifest,'dev',ALL_OPPONENTS,1)
+            self.assertEqual([x['opponent'] for x in chosen],list(ALL_OPPONENTS))
+            with self.assertRaises(ValueError):select_states(manifest,'holdout',ALL_OPPONENTS,1)
+            with self.assertRaises(ValueError):select_states(manifest,'dev',ALL_OPPONENTS,2)
+            (root/'dev-0.sta').write_bytes(b'changed')
+            with self.assertRaises(ValueError):select_states(manifest,'dev',ALL_OPPONENTS,1)
     def evidence(self):
         state={'emulated_seconds':0.,'native_frame_period':.016768,'effective_difficulty':3,
                'p1':{'char':4,'wins':0},'p2':{'char':3,'wins':0}}

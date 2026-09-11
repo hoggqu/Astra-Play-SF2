@@ -15,21 +15,29 @@ from astra_play_sf2.runner import sha256
 
 HERE=Path(__file__).resolve().parent
 OPPONENTS=(3,0,6)
+ALL_OPPONENTS=(0,1,2,3,5,6,7,8,9,10,11)
 
 
 def select_train(dataset):
+    return select_states(dataset,'train',OPPONENTS,2)
+
+
+def select_states(dataset,split,opponents,count):
+    if split not in ('train','dev'):raise ValueError('Holdout is reserved; select train or dev')
+    if count<1 or not opponents or len(set(opponents))!=len(opponents) or any(o not in ALL_OPPONENTS for o in opponents):
+        raise ValueError('Invalid state selection')
     path=Path(dataset).resolve();data=json.loads(path.read_text());selected=[]
     if data.get('status')!='complete' or data.get('difficulty')!=3:raise ValueError('Need completed Normal dataset')
-    for opponent in OPPONENTS:
-        rows=[r for r in data['openings'] if r['split']=='train' and r['opponent']==opponent]
-        if len(rows)<2:raise ValueError('Need two train states per opponent')
-        for original in rows[:2]:
+    for opponent in opponents:
+        rows=[r for r in data['openings'] if r['split']==split and r['opponent']==opponent]
+        if len(rows)<count:raise ValueError('Insufficient selected states per opponent')
+        for original in rows[:count]:
             row=dict(original);file=(path.parent/row['path']).resolve()
             if not file.is_relative_to(path.parent) or row.get('status')!='accepted' or row['difficulty']!=3:
-                raise ValueError('Invalid train metadata')
+                raise ValueError('Invalid checkpoint metadata')
             if sha256(file)!=row['sha256']:raise ValueError('Checkpoint hash mismatch')
             row['path']=str(file);selected.append(row)
-    if len({r['sha256'] for r in selected})!=6:raise ValueError('Duplicate train states')
+    if len({r['sha256'] for r in selected})!=len(selected):raise ValueError('Duplicate selected states')
     return selected
 
 
@@ -97,12 +105,15 @@ def audit(response,opponent):
             'round_outcomes':[r['outcome'] for r in response['rounds']]}
 
 
-def run(source,model,dataset,output,max_seconds=900):
+def run(source,model,dataset,output,max_seconds=900,dev_all=False):
     source=Path(source).resolve();model=Path(model).resolve();dataset=Path(dataset).resolve();output=Path(output).resolve()
     if not 1<=max_seconds<=900:raise ValueError('Suite budget must be 1..900 seconds')
-    selected=select_train(dataset);output.mkdir(parents=True,exist_ok=False)
+    opponents=ALL_OPPONENTS if dev_all else OPPONENTS
+    selected=select_states(dataset,'dev',opponents,1) if dev_all else select_train(dataset)
+    output.mkdir(parents=True,exist_ok=False)
     record={'schema':'astra.rl-train-argmax-diagnostic.v1','status':'running','formal_clear':False,'included_in_formal_win_rates':False,
-            'selection':'deterministic_argmax','holdout_opened':False,'matches_requested':12,'suite_budget_seconds':max_seconds,
+            'selection':'deterministic_argmax','split':'dev' if dev_all else 'train','holdout_opened':False,
+            'matches_requested':len(selected)*2,'suite_budget_seconds':max_seconds,
             'model_sha256':sha256(model),'dataset_sha256':sha256(dataset),'cases':[],'source':str(source)}
     environment=None;started=time.monotonic();expired=threading.Event()
     def expire():expired.set();_thread.interrupt_main()
@@ -134,7 +145,7 @@ def run(source,model,dataset,output,max_seconds=900):
         if sha256(model)!=record['model_sha256']:raise RuntimeError('Model changed during evaluation')
         if any(sha256(source/name)!=digest for name,digest in record['source_files_sha256'].items()):raise RuntimeError('Source changed during evaluation')
         record['by_opponent']={}
-        for opponent in OPPONENTS:
+        for opponent in opponents:
             cases=[x for x in record['cases'] if x['opponent']==opponent]
             record['by_opponent'][str(opponent)]={'matches':dict(Counter(x['audit']['outcome'] for x in cases)),
                 'rounds':dict(Counter(r for x in cases for r in x['audit']['round_outcomes'])),
@@ -156,6 +167,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for key in ('source','model','dataset','output'):p.add_argument('--'+key,type=Path,required=True)
     p.add_argument('--max-seconds',type=int,default=900)
+    p.add_argument('--dev-all',action='store_true',help='Model selection: one dev state for each of all 11 opponents, leads 0/12; never holdout or formal clear')
     a=p.parse_args();r=run(**vars(a));print(json.dumps({'status':r['status'],'by_opponent':r['by_opponent'],'wall_seconds':r['wall_seconds']}))
 
 if __name__=='__main__':main()
