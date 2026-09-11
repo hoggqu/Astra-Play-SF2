@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import time
+import signal
 
 import numpy as np
 import torch
@@ -58,6 +59,9 @@ def main():
         parser.error('steps and eval-every must be positive multiples of workers*256')
     if args.steps % args.eval_every and not args.benchmark:
         parser.error('steps must be a multiple of eval-every')
+    def interrupted(_signum, _frame):
+        raise KeyboardInterrupt('Training service interrupted')
+    signal.signal(signal.SIGTERM, interrupted)
     torch.set_num_threads(1)
     groups, difficulty = load_dataset(args.dataset)
     output = args.output.resolve()
