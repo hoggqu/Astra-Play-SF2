@@ -28,7 +28,7 @@ local function parse_training(src)
 end
 local function parse_start(src)
  local text=src:match('^%s*(.-)%s*$')
- local prefix,id,flag,speed=text:match("^play_match%('(training/[%w_/%-]+)',(%d+),{training_validation=(%a+),speed='(%a+)'}%)$")
+ local prefix,id,flag,speed=text:match("^play_match%('(training/[%w_/%-]+)',(%d+),{training_validation=(%a+),speed='([%w]+)'}%)$")
  if not prefix then prefix,id,flag=text:match("^play_match%('(training/[%w_/%-]+)',(%d+),{training_validation=(%a+)}%)$") end
  if prefix and (flag=='true' or flag=='false') then
   return prefix,tonumber(id),flag=='true',speed or 'normal'

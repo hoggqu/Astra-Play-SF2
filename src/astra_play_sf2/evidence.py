@@ -154,7 +154,19 @@ def _entry_readiness(attempt):
         # Task ownership above, not stale fighter/ending fields, proves readiness.
 
 
-def _match(run, relative, level, selection, speed, needed, verify_difficulty=True):
+def _speed_checks(summary, mode):
+    rates = {'normal': 1, '2x': 2, '4x': 4, 'fast': 1}
+    _require(mode in rates, 'Unsupported recorded speed mode')
+    _require(type(summary.get('speed_checks')) is int
+             and summary['speed_checks'] == summary['frame'], 'Speed/frame checks differ')
+    _require(summary.get('speed_throttled') is (mode != 'fast'), 'Recorded speed throttle differs')
+    rate = summary.get('speed_throttle_rate')
+    _require(type(rate) in (int, float) and rate == rates[mode], 'Recorded speed multiplier differs')
+    _require(type(summary.get('speed_factor')) is int and summary['speed_factor'] == 1000,
+             'Recorded speed factor differs')
+
+
+def _match(run, relative, level, selection, speed, needed, verify_difficulty=True, verify_speed=False):
     path = _path(run, relative)
     status_rel = str(Path(relative).with_name(Path(relative).stem + '-status.json')).replace('\\', '/')
     policy_rel = str(Path(relative).with_name(Path(relative).stem + '-policy.lua')).replace('\\', '/')
@@ -173,6 +185,8 @@ def _match(run, relative, level, selection, speed, needed, verify_difficulty=Tru
                  'Difficulty unverified: internal frame checks differ')
         _snapshot_difficulties({key: value for key, value in raw.items() if key != 'trace'}, level)
     _require(s['speed'] == speed, 'Speed differs from manifest')
+    if verify_speed:
+        _speed_checks(s, speed)
     op = s['opponent']
     _require(op in OPS and s['mode'] == selection[str(op)], 'Wrong selected mode/opponent')
     _require(s['timeout_guard'] == (op in (1, 5, 8, 11)), 'Wrong frozen timeout guard')
@@ -301,7 +315,8 @@ def _inspect(run):
             _require(attempt['outcome'] in ('gameplay_clear', 'loss'), 'Invalid attempt cannot certify')
             _require(len(set(attempt['matches'])) == len(attempt['matches']), 'Duplicate match paths')
             for relative in attempt['matches']:
-                row['matches'].append(_match(run, relative, level, selection, manifest['speed'], needed, verify_difficulty))
+                row['matches'].append(_match(run, relative, level, selection, manifest['speed'], needed,
+                                             verify_difficulty, verify_speed='speed.lua' in runtime))
             matches = row['matches']; route = [m['opponent'] for m in matches]
             _require(route and len(route) == len(set(route)) and len(route) <= 11, 'Invalid route')
             _require(set(route[:7]) <= (OPS-{8, 9, 10, 11}) and route[7:] == [10, 11, 9, 8][:max(0, len(route)-7)], 'Route is not native fighters then bosses')
@@ -531,7 +546,7 @@ def write_report(run: Path) -> dict:
         bucket['name'] = NAMES[int(op)]
     count = len(manifest['attempts'])
     difficulties = _difficulty_totals(manifest, audit)
-    report = {'schema': 'astra-play-sf2.report.v1', 'status': manifest['status'], 'audit': audit,
+    report = {'schema': 'astra-play-sf2.report.v1', 'status': manifest['status'], 'speed': manifest['speed'], 'audit': audit,
               'attempts_started': count, 'gameplay_clears_audited': valid_clears, 'reviewer_approved_clears': approved,
               'clear_rate': valid_clears/count if count else None, 'rounds': dict(stats), 'opponents': opponents,
               'clear_rate_denominator': count, 'difficulties': difficulties,
@@ -541,6 +556,7 @@ def write_report(run: Path) -> dict:
     lines = ['# Astra-Play-SF2 report', '', f"Audit: {'PASS' if audit['ok'] else 'NOT VERIFIED'}", '',
              f'Audited gameplay clears: {valid_clears}/{count}. Reviewer-approved clears: {approved}.',
              'Difficulty: '+report['difficulty_verification']+'.',
+             'Speed: '+report['speed']+'.',
              f"Rounds: {stats['win']}W {stats['loss']}L {stats['draw']}D.", '']
     level_lines = ['| Difficulty | Clears/started | Losses | Invalid | Pending | Clear rate | Max/final streak |',
                    '|---|---:|---:|---:|---:|---:|---:|']
@@ -566,7 +582,7 @@ def write_report(run: Path) -> dict:
     lines += ['## Audit errors', '', *('- '+e for e in audit['errors']), '', report['limitations']]
     md = '\n'.join(lines)+'\n'
     body = ['<!doctype html><meta charset="utf-8"><title>Astra-Play-SF2 report</title>', '<h1>Astra-Play-SF2 report</h1>',
-            '<pre>'+html.escape('\n'.join(lines[:7]))+'</pre>']
+            '<pre>'+html.escape('\n'.join(lines[:8]))+'</pre>']
     body.append('<h2>Per difficulty</h2><pre>'+html.escape('\n'.join(level_lines))+'</pre><p>'+html.escape(denominator)+'</p>')
     body.append('<h2>Opponent round statistics</h2><pre>'+html.escape('\n'.join(opponent_lines))+'</pre>')
     for a in manifest['attempts']:

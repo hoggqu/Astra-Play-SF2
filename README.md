@@ -20,6 +20,10 @@ returning early instead of always idling 9000 frames. See [entry checks](docs/en
 
 Play **Street Fighter II: The World Warrior (World 910522)** as Ken with a fixed Lua policy and a Python command-line runner. Gameplay runs locally in MAME; it needs no AI model, API key, or online service.
 
+Speed options: `--speed normal` (default), `--speed 2x`, `--speed 4x`, and
+`--speed fast` (unthrottled). Version 0.1.4 adds fixed 2x and 4x targets;
+actual throughput depends on host performance.
+
 The runner uses ordinary player-one controls and current game state. Each difficulty boots an isolated, preconfigured session, then uses natural game completion and coin insertion between attempts at that level. It does not load states, continue a defeated game, reset between attempts, or pause inside a match to change its policy.
 
 **Required:** Python 3.10+ and **MAME 0.288**, installed separately, plus your own compatible `sf2` ROM set. MAME, ROMs, save states, screenshots, and historical run logs are not included in the package. See [installation](docs/installation.md) for official download links.

@@ -1,5 +1,30 @@
 # Validation history and portability
 
+## Fixed speed targets — 0.1.4, 2026-09-11
+
+The CLI accepts `normal`, `2x`, `4x`, and `fast`. Fixed targets use MAME's
+native throttle multiplier. Every match frame checks throttling, multiplier,
+and base speed factor; the offline audit checks the recorded speed evidence.
+Reports include the selected speed. Frozen V4 fighter/core/selection are unchanged.
+
+Native diagnostics on macOS 26.5.2 arm64, Python 3.12.14, MAME 0.288,
+`sf2` World 910522, difficulty 7:
+
+| Mode | 1200 native frames (20.102 game seconds) | Complete opponent match |
+|---|---:|---|
+| `2x` | 10.104 wall seconds | Ken beat Dhalsim 2–0; all 5783 speed checks passed |
+| `4x` | 5.084 wall seconds | Ken beat Dhalsim 2–0; all 5783 speed checks passed |
+
+Each diagnostic used a fresh CLI-owned process and natural coin entry, with
+no state loading or policy changes. Match evidence passed the offline audit.
+These are two speed functionality tests, not full-game clears or win-rate
+measurements. Actual speed remains limited by the host's performance.
+
+Local tests: 76 discovered, 75 passed, one Windows-only reproduction skipped.
+The built 0.1.4 wheel installed and staged its runtime outside the checkout,
+including the new speed module and unchanged frozen policy hashes. The Windows
+real-Lua CI job now also exercises all four modes and rejects speed tampering.
+
 ## Windows status publication — 0.1.3, 2026-09-11
 
 The [status I/O change](windows-status-io.md) adds real Lua 5.4 file tests and

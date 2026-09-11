@@ -17,7 +17,8 @@ model is not part of its runtime. Use the same commands as a human operator.
    merely to ask permission for a project-local download or installation.
 4. Run `astra-sf2 configure --mame PATH --rom-dir PATH` and `astra-sf2 doctor`.
 5. Run `astra-sf2 verify --difficulty 3`. Default: one attempt, normal speed.
-   `--speed fast` enables fast-forward when requested. `--difficulty all
+   `--speed 2x` and `--speed 4x` select fixed speed targets; `--speed fast`
+   removes throttling when requested. `--difficulty all
    --attempts 5` runs five attempts at each level, Normal (3) to Hardest (7).
 6. Keep the printed run directory. Run `astra-sf2 audit RUN_DIR` and
    `astra-sf2 report RUN_DIR`. Report every attempt, loss and invalid execution.

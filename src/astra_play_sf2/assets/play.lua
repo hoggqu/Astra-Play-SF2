@@ -7,6 +7,7 @@ if train_busy and train_busy() then error('Cannot reload modules during a traini
 if play_busy and play_busy() then error('Cannot reload play controller during a match') end
 local Core=assert(loadfile('training/runtime/play_core.lua'))()
 local StatusIO=assert(loadfile('training/runtime/status_io.lua'))()
+local Speed=assert(loadfile('training/runtime/speed.lua'))()
 local Recorder=(function()
 -- Pure all-frame observer. No MAME, memory, input, file, time or policy APIs.
 local Recorder={};Recorder.__index=Recorder
@@ -105,6 +106,7 @@ local function view(r)
   difficulty_bits=r.difficulty_bits,difficulty_label=astra_difficulty_label,difficulty_checks=r.difficulty_checks,
   effective_difficulty=r.effective_difficulty,effective_difficulty_checks=r.effective_difficulty_checks,
   normal_speed=r.normal_speed,speed=r.speed,pauses_during_match=r.pauses,loads=r.loads,saves=r.saves,
+  speed_checks=r.speed_checks,speed_throttled=r.speed_settings.throttled,speed_throttle_rate=r.speed_settings.throttle_rate,speed_factor=r.speed_settings.speed_factor,
   valid_continuous=r.valid and r.status=='complete',result=r.result,reason=r.reason,
   training_validation=r.training_validation,latest=r.latest,
   diagnostic_level='full',trace_frames=r.recorder.observed,telemetry_error=r.telemetry_error or false,
@@ -205,12 +207,12 @@ local function start_match(prefix,opponent,options)
  assert(modes[opponent],'Unsupported opponent')
  options=options or {};for k in pairs(options) do assert(k=='training_validation' or k=='speed','Unsupported option: '..tostring(k)) end
  local selected_speed=options.speed or 'normal'
- assert(selected_speed=='normal' or selected_speed=='fast','Speed must be normal or fast')
+ local speed_settings=Speed.settings(selected_speed)
  local opening=snapshot_state()
  local policy=choose
  local r={prefix=prefix,opponent=opponent,status='running',valid=true,pauses=0,loads=0,saves=0,
   difficulty_bits=astra_difficulty_bits,dip_port_value=m.ioport.ports[':DSWB']:read(),difficulty_checks=0,effective_difficulty=7-astra_difficulty_bits,effective_difficulty_checks=0,
-  normal_speed=selected_speed=='normal',speed=selected_speed,events={},settlement_trace={},latest=opening,training_validation=options.training_validation==true,
+  normal_speed=selected_speed=='normal',speed=selected_speed,speed_settings=speed_settings,speed_checks=0,events={},settlement_trace={},latest=opening,training_validation=options.training_validation==true,
   policy=policy,fighter=fighter,keys=keys,release=release,sources={},recorder=Recorder.new()}
  local function traced_policy(a,b,selected)
   local seq,reason=policy(a,b,selected)
@@ -219,14 +221,14 @@ local function start_match(prefix,opponent,options)
  end
  r.core=Core.new({mode=modes[opponent],opponent=opponent,choose=traced_policy,lead=opponent==8 and 2 or 0,timeout_guard=timeout_guards[opponent]},opening)
  local ok,err=pcall(function()
-  for _,path in ipairs({'training/runtime/fighter.lua','training/runtime/play_core.lua','training/runtime/play.lua','training/runtime/status_io.lua','training/runtime/difficulty.lua','training/runtime/settings.lua'}) do
+  for _,path in ipairs({'training/runtime/fighter.lua','training/runtime/play_core.lua','training/runtime/play.lua','training/runtime/speed.lua','training/runtime/status_io.lua','training/runtime/difficulty.lua','training/runtime/settings.lua'}) do
    r.sources[path]=readfile(path)
   end
   local policy_file=assert(io.open(prefix..'-policy.lua','wb'))
   local written,write_err=policy_file:write(r.sources['training/runtime/fighter.lua'])
   local closed,close_err=policy_file:close()
   assert(written,write_err);assert(closed,close_err)
-  r.release();normal_speed();m.video.throttled=r.speed=='normal'
+  r.release();Speed.apply(m.video,r.speed)
   event(r,{kind='match_start',state=opening,mode=r.core.mode,lead_frames=r.core.lead,speed=r.speed})
   active=r;last=r;persist(r);emu.unpause()
   assert(active==r and not r.finished,'Start was interrupted')
@@ -262,9 +264,7 @@ play_frame_subscription=emu.add_machine_frame_notifier(function()
    return finish({valid=false,reason='loaded policy or input interface changed'})
   end
   if bot or job or advance or loadwatch or savewatch then return finish({valid=false,reason='foreign controller became active'}) end
-  if m.video.throttled~=(r.speed=='normal') or m.video.throttle_rate~=1 then
-   r.normal_speed=false;return finish({valid=false,reason='selected game speed changed'})
-  end
+  Speed.check(m.video,r.speed);r.speed_checks=r.speed_checks+1
   r.difficulty_checks=r.difficulty_checks+1
   if m.ioport.ports[':DSWB']:read()~=r.dip_port_value then return finish({valid=false,reason='DIP settings changed during match'}) end
   r.latest=snapshot_state()

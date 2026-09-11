@@ -20,7 +20,7 @@ def main(argv=None):
     verify.add_argument("--difficulty", choices=["3", "4", "5", "6", "7", "all"], default="3")
     verify.add_argument("--attempts", type=int, default=1)
     verify.add_argument("--consecutive", type=int)
-    verify.add_argument("--speed", choices=["normal", "fast"], default="normal")
+    verify.add_argument("--speed", choices=["normal", "2x", "4x", "fast"], default="normal")
     for name in ("audit", "report", "review"):
         command = commands.add_parser(name)
         command.add_argument("run_dir", type=Path)

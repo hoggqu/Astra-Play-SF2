@@ -8,12 +8,29 @@ The entry point is `astra-sf2`. Run `astra-sf2 --help` or add `--help` after a c
 |---|---|
 | `configure --mame PATH --rom-dir PATH [--data-dir PATH]` | Store local executable, ROM, and data paths. |
 | `doctor` | Check the local setup and report what needs attention. |
-| `verify --difficulty 3..7\|all [--attempts N] [--speed normal\|fast] [--consecutive N]` | Run a new isolated, bounded gameplay session. |
+| `verify --difficulty 3..7\|all [--attempts N] [--speed normal\|2x\|4x\|fast] [--consecutive N]` | Run a new isolated, bounded gameplay session. |
 | `audit RUN_DIR` | Inspect the recorded gameplay evidence and constraints. |
 | `review RUN_DIR --attempt ID --reviewer NAME --decision approve\|reject` | Record an offline review decision for one attempt. |
 | `report RUN_DIR` | Report results for the preserved session. |
 
 `3..7` means one integer: `3`, `4`, `5`, `6`, or `7`; do not type the literal range. Level 3 is Normal and level 7 is Hardest. Use `all` for all five levels. A bare `verify` defaults to difficulty `3`, one attempt, and `normal` speed.
+
+| Speed | Target |
+|---|---|
+| `normal` | Original arcade speed (default) |
+| `2x` | Twice original speed |
+| `4x` | Four times original speed |
+| `fast` | Unthrottled; as fast as the host can run |
+
+Fixed rates are targets: a slow host may not sustain them. Entry waits and
+gameplay use the chosen setting. Every match checks throttling, target rate and
+the native base speed factor on every frame; changing them mid-match invalidates
+the run. Version 0.1.4 adds the fixed rates without modifying the frozen policy.
+
+```sh
+astra-sf2 verify --difficulty 7 --speed 2x
+astra-sf2 verify --difficulty 7 --speed 4x
+```
 
 ## Single run and bounded verification
 

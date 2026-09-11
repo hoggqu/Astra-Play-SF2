@@ -23,13 +23,13 @@
     "control.lua": {
       "origin": "control.lua",
       "original_sha256": "62aeb355a8de58b684c26dfa02e00fdaa97c40f38f31137b28435ded6b528432",
-      "sha256": "5fa46606b4ecdc3b242aec36fa01f93699c42f5bb9e76feb66b16a02ef907e52",
+      "sha256": "64112928f51241706e58722e929050fbccc2713875651fa6e4ef0445c3155737",
       "unchanged": false
     },
     "bridge.lua": {
       "origin": "bridge.lua",
       "original_sha256": "f27a3f88b0965eb28cd0111e1c9b992ee4f27cf3c6a474c7ad4285103a53dcd4",
-      "sha256": "3962e37a1dffeab34c0a9fe41c2652bd02adebb15c433dd94e7dc97f4f5b4931",
+      "sha256": "c0fd8e2a708c632b7356dbc380036fb69b12d5039e52796e6a1aa6342e64acc9",
       "unchanged": false
     },
     "observe.lua": {
@@ -41,7 +41,7 @@
     "play.lua": {
       "origin": "coin22-v4-l7/play.lua",
       "original_sha256": "e418df9177fca701d30e215fff17dfe39dae3f1462f54ae06159353edaac5274",
-      "sha256": "0ad3a24ad9be7d293ae86527ef4520c035fd2fae4338230e297163a1033bab6a",
+      "sha256": "4359c22058978ed7977f5e23c05b1edfc4d0bcf7aff62555ba8240feb7f83967",
       "unchanged": false
     }
   }

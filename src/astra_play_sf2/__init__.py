@@ -1,2 +1,2 @@
 """Portable, agent-independent SF2 verification."""
-__version__ = "0.1.3"
+__version__ = "0.1.4"

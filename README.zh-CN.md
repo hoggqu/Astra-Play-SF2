@@ -18,6 +18,9 @@
 
 [English](README.md) · [Agent 接手](AGENTS.md) · [实现说明](docs/architecture.md)
 
+速度支持 `--speed normal`（默认）、`--speed 2x`、`--speed 4x` 和
+`--speed fast`（不限速）。2 倍和 4 倍为 0.1.4 新增，实际速度受机器性能限制。
+
 ## 安装和首次运行
 
 先安装 **Python 3.10+**、**MAME 0.288**，准备兼容 `sf2 / World 910522` 的 ROM。[安装文档](docs/installation.md)提供官方软件下载入口。项目不包含模拟器、ROM 或存档。

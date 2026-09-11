@@ -11,7 +11,10 @@ def main():
     except ImportError as exc:
         raise SystemExit("Install test dependency lupa to execute real Lua I/O tests") from exc
     from test_status_io import StatusIOTests
-    result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(StatusIOTests))
+    from test_speed import LuaSpeedTests
+    suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(case)
+                               for case in (StatusIOTests, LuaSpeedTests))
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
     if result.skipped:
         raise SystemExit("Windows Lua status I/O suite unexpectedly skipped tests")
     return 0 if result.wasSuccessful() else 1

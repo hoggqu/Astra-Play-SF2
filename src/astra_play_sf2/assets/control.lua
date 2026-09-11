@@ -9,6 +9,7 @@ function guard_training_action()
  if play_busy and play_busy() then error('Continuous play is locked; use play_abort() to stop explicitly') end
 end
 local machine = manager.machine
+local Speed=assert(loadfile('training/runtime/speed.lua'))()
 local ports = machine.ioport.ports
 keys = {
  R=ports[':IN1'].fields['P1 Right'], L=ports[':IN1'].fields['P1 Left'],
@@ -19,21 +20,18 @@ keys = {
 }
 job = nil
 shots = shots or 0
-training_fast = training_fast or false
+local training_speed='normal'
 function apply_training_speed()
- machine.video.throttled=not training_fast
- machine.video.throttle_rate=1
+ Speed.apply(machine.video,training_speed)
 end
 function normal_speed()
- training_fast=false
- machine.video.throttled=true
- machine.video.throttle_rate=1
+ training_speed='normal';apply_training_speed()
 end
 function speed(mode)
  guard_training_action()
  if job or bot or advance or loadwatch or savewatch then error('Wait for the current action before changing speed') end
- if mode~='normal' and mode~='fast' then error('Speed must be normal or fast') end
- training_fast=mode=='fast';apply_training_speed()
+ Speed.settings(mode)
+ training_speed=mode;apply_training_speed()
 end
 function release() for _,f in pairs(keys) do f:clear_value() end end
 function shot()

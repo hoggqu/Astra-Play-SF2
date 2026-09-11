@@ -118,8 +118,8 @@ def verify(config, levels, attempts=1, speed="normal", consecutive=None):
     if type(attempts) is not int or attempts < 1 or (consecutive is not None and
             (type(consecutive) is not int or not 1 <= consecutive <= attempts)):
         raise ValueError("Attempts must be positive; consecutive must be between 1 and attempts")
-    if speed not in ("normal", "fast"):
-        raise ValueError("Speed must be normal or fast")
+    if speed not in ("normal", "2x", "4x", "fast"):
+        raise ValueError("Speed must be normal, 2x, 4x or fast")
     preflight = doctor(config)
     if not preflight["ok"]:
         raise RuntimeError("Preflight failed: " + json.dumps(preflight))

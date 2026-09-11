@@ -118,6 +118,9 @@ class EvidenceTests(unittest.TestCase):
     def test_complete_report_and_explicit_review(self):
         self.assertTrue(audit_run(self.run)['ok'])
         report = write_report(self.run)
+        self.assertEqual(report['speed'], 'fast')
+        self.assertIn('Speed: fast.', (self.run/'report.md').read_text())
+        self.assertIn('Speed: fast.', (self.run/'report.html').read_text())
         self.assertEqual(report['rounds'], dict(win=22, loss=0, draw=0))
         self.assertEqual(report['reviewer_approved_clears'], 0)
         review = record_review(self.run, 'l3-001', 'Human reviewer', 'approve')
@@ -217,6 +220,53 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(report['gameplay_clears_audited'],0)
         self.assertIn('provisional',report['round_stats_basis'])
         with self.assertRaises(ValueError): record_review(self.run,'l3-001','reviewer','approve')
+
+    def enable_speed(self, mode):
+        source = self.run/'training/runtime/speed.lua'
+        source.write_text('-- fixture fixed-speed controller', encoding='utf-8')
+        self.manifest['runtime_sha256']['speed.lua'] = digest(source)
+        self.manifest['speed'] = mode
+        rate = {'normal': 1, '2x': 2, '4x': 4, 'fast': 1}[mode]
+        for rel in self.attempt['matches']:
+            raw = json.loads((self.run/rel).read_text())
+            raw['summary'].update(speed=mode, speed_checks=raw['summary']['frame'],
+                                  speed_throttled=mode != 'fast', speed_throttle_rate=rate,
+                                  speed_factor=1000)
+            self.put_match(rel, raw)
+        self.seal()
+
+    def test_all_speed_modes_with_complete_native_checks_pass(self):
+        for mode in ('normal', '2x', '4x', 'fast'):
+            with self.subTest(mode=mode):
+                self.enable_speed(mode)
+                result = audit_run(self.run)
+                self.assertTrue(result['ok'], result['errors'])
+
+    def test_wrong_or_incomplete_native_speed_checks_refused(self):
+        self.enable_speed('2x')
+        rel = self.attempt['matches'][0]
+        original = json.loads((self.run/rel).read_text())
+        for values in ({'speed_throttle_rate': 4}, {'speed_throttle_rate': True},
+                       {'speed_throttled': False}, {'speed_throttled': 1},
+                       {'speed_checks': 721}, {'speed_checks': None},
+                       {'speed_factor': 2000}, {'speed': '4x'}):
+            with self.subTest(values=values):
+                raw = copy.deepcopy(original)
+                raw['summary'].update(values)
+                self.put_match(rel, raw)
+                self.seal()
+                self.assertFalse(audit_run(self.run)['ok'])
+        for key in ('speed_checks', 'speed_throttled', 'speed_throttle_rate', 'speed_factor'):
+            with self.subTest(missing=key):
+                raw = copy.deepcopy(original)
+                del raw['summary'][key]
+                self.put_match(rel, raw)
+                self.seal()
+                self.assertFalse(audit_run(self.run)['ok'])
+
+    def test_legacy_runtime_without_speed_module_keeps_existing_audit(self):
+        self.assertNotIn('speed.lua', self.manifest['runtime_sha256'])
+        self.assertTrue(audit_run(self.run)['ok'])
 
     def enable_entry(self):
         entry = self.run/'training/runtime/entry.lua'
