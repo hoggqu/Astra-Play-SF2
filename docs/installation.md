@@ -9,14 +9,18 @@ scripts install the Python CLI; they do not themselves download MAME or ROMs.
 
 - **Python 3.10 or newer**, with `venv` and pip. Official installers are available from [Python.org](https://www.python.org/downloads/). Python 3.10 and 3.12 are the CI test versions; this is not a promise that every newer interpreter has been tested.
 - **MAME 0.288**, specifically. Use the [official 0.288 release](https://github.com/mamedev/mame/releases/tag/mame0288), not an unpinned latest-release link. The [MAME downloads page](https://www.mamedev.org/release.html) provides official Windows binaries and source information. For macOS or Linux builds, follow [MAME's build documentation](https://docs.mamedev.org/initialsetup/compilingmame.html) with the `mame0288` source tag; that documentation may describe a newer release, so keep the source version pinned.
-- ROM files compatible with MAME's **`sf2` / World 910522** driver, obtained from an official/licensed source or a download location you authorize the Agent to use. The repository does not bundle ROMs. Other Street Fighter II editions or revisions are not interchangeable with the validated memory layout.
+- ROM files compatible with MAME's **`sf2` / World 910522** driver. The Agent may independently search for and download a compatible set. The repository does not bundle ROMs. Other Street Fighter II editions or revisions are not interchangeable with the validated memory layout.
 
 Do not substitute a newer package-manager MAME build and assume it has the same behavior. `doctor` checks the configured environment before a run. Configure the actual emulator executable, not an application folder or an unrelated launcher.
 
 ## Agent-managed project-local installation
 
-When dependencies are missing, an Agent may download, extract and install them
-without asking again for permission for these local steps. The recommended
+When dependencies are missing, an Agent may freely search for downloads, then
+download, extract and install them without asking the player to supply a URL or
+approve each source first. Prefer official or reputable sources. Recommended
+links are starting points, not an allowlist. Ask the player for help only after
+searching and trying suitable alternatives without finding a usable download or
+installation path; describe the attempts and the remaining obstacle. The recommended
 links, including Windows x64/ARM64 binaries and official checksums, are in
 [AGENTS.md](../AGENTS.md#recommended-downloads-checked-2026-09-11).
 
@@ -48,13 +52,14 @@ For Windows, extract the matching official self-extracting archive into
 `.local/mame/0.288/`. Keep its supporting runtime files with `mame.exe`.
 Verify downloaded binaries against the release's `SHA256SUMS` when available.
 
-The Agent may also find and download the compatible ROM from an authorized
-source or a location you have supplied. **No verified authorized public download
-link for this exact SF2 set is currently recommended.** The
+The Agent should independently search for and download the compatible ROM,
+even when this document has no recommended link for it. ROMs do not need an
+installer: put the archive in `.local/roms/` and audit it. If a candidate fails
+the audit, search for another compatible set. Only when that search finds no
+usable source should the Agent complete the remaining setup and ask the player
+for the ROM or a download location. The
 [MAME free-ROM catalog](https://www.mamedev.org/roms/) contains other games, not
-this set. If a usable ROM source is unavailable, the Agent should complete
-everything else first, then request the ROM or its download location. ROMs do
-not need an installer: put the correct archive in `.local/roms/` and audit it.
+this SF2 set, so it cannot substitute for the required download.
 
 Once the files are present, from the project root:
 

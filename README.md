@@ -12,10 +12,11 @@ The runner uses ordinary player-one controls and current game state. Each verifi
 
 **Required:** Python 3.10+ and **MAME 0.288**, installed separately, plus your own compatible `sf2` ROM set. MAME, ROMs, save states, screenshots, and historical run logs are not included in the package. See [installation](docs/installation.md) for official download links.
 
-If dependencies are missing, an Agent may [download and install them inside the
-project](docs/installation.md#agent-managed-project-local-installation), using
-the pinned MAME links and an authorized compatible-ROM source. Local downloads
-are kept under the Git-ignored `.local/` directory.
+If dependencies are missing, an Agent may independently search for MAME 0.288
+and compatible ROM downloads, then [install and check them inside the
+project](docs/installation.md#agent-managed-project-local-installation). Ask the
+player for help only after searching and trying suitable alternatives without
+finding a usable setup. Local downloads stay in the Git-ignored `.local/` directory.
 
 ## Quick start
 

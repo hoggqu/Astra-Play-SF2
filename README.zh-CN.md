@@ -12,7 +12,7 @@
 
 先安装 **Python 3.10+**、**MAME 0.288**，准备兼容 `sf2 / World 910522` 的 ROM。[安装文档](docs/installation.md)提供官方软件下载入口。项目不包含模拟器、ROM 或存档。
 
-本地缺少依赖时，允许 Agent 按 [AGENTS.md](AGENTS.md#missing-dependencies-automatic-project-local-setup) 自行下载并安装到项目的 `.local/` 目录，不必仅因文件缺失就停下询问。MAME 使用推荐的固定版本链接；ROM 可从授权来源或你已提供的下载地址获取，下载后必须通过兼容性校验。
+本地缺少依赖时，允许 Agent 按 [AGENTS.md](AGENTS.md#missing-dependencies-automatic-project-local-setup) 自由寻找 MAME 0.288 和兼容 ROM 的下载来源，自行下载、安装到项目的 `.local/` 目录并校验，无需玩家先提供地址或逐个确认来源。推荐链接只是搜索起点；只有搜索并尝试合适的替代方案后仍无法完成安装，才请玩家协助，并说明已尝试的办法和具体障碍。
 
 macOS / Linux，在下载并解压的项目目录中执行：
 

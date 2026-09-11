@@ -28,21 +28,28 @@ Use `.local/` under the repository root; it is ignored by Git. Keep downloads in
 installation when available. Do not overwrite the original `MAME/` training
 archive or replace dependencies used by an active session.
 
+- **Search autonomously:** you may freely search for suitable MAME and compatible
+  ROM downloads; the recommended links are starting points, not an allowlist.
+  Find, download, install and check missing files yourself without requiring the
+  player to supply a URL or approve each source first. Prefer official or
+  reputable sources. Ask the player for help only after searching and trying
+  suitable alternatives without finding a usable download or installation path;
+  explain what you tried and the specific remaining obstacle.
 - **MAME:** detect the OS and CPU architecture, then download, extract or build
-  **0.288** from the recommended links below. Install the executable and required
+  **0.288**, starting with the recommended links below. Install the executable and required
   runtime files together inside the project. On macOS/Linux, build the tagged
   source if a matching binary is unavailable. Follow the platform build
   instructions for prerequisites; a system-required privilege/login prompt may
   need the user, but ordinary local setup does not require another confirmation.
-- **ROM:** you may search for and download a compatible `sf2` set from an
-  official/licensed source or a download location the user has authorized you
-  to use. A provided download URL is sufficient direction to proceed without
-  asking again for a local file path. Preserve the archive as
+- **ROM:** independently search for and download a compatible `sf2` / World
+  910522 set. You do not need a player-provided download URL to begin. The absence
+  of a recommended SF2 link in this document is a reason to search, not to stop
+  and ask the player. Preserve the archive as
   `.local/roms/sf2.zip`; do not change another SFII edition's filename to make it
-  appear compatible. We do not currently have a verified authorized public
-  download link for the required World 910522 arcade set. If no usable source
-  is available, finish the emulator/CLI setup, then ask for the compatible ROM
-  or its download location. Do not substitute the unrelated free games below.
+  appear compatible. If a candidate fails the ROM audit, look for another
+  compatible set. Only if that search finds no usable source, finish the
+  emulator/CLI setup and ask for the compatible ROM or its download location.
+  Do not substitute the unrelated free games below.
 - **Verify and continue:** confirm `mame -version`, run `configure` with the
   actual local executable/ROM/data paths, then `doctor`. Proceed with the
   requested verification only after its version and ROM audit pass. A filename
