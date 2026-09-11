@@ -393,6 +393,24 @@ def training_round_markdown(summary):
     return sampling_markdown(summary)+lines+['']
 
 
+def selection_markdown(summary):
+    if summary.get('selection'):
+        return summary['selection']
+    audit = summary.get('action_interface_audit')
+    if isinstance(audit, dict) and audit.get('selection'):
+        return f"{audit['selection']}（来源：action_interface_audit.selection）"
+    return '未声明'
+
+
+def interface_audit_markdown(audit):
+    if not isinstance(audit, dict):
+        return '未声明（完整细节见 report.json）'
+    fields = [('ok', 'ok'), ('checked_matches', 'checked_matches'),
+              ('interface', 'action_interface'), ('selection', 'selection')]
+    return '；'.join(f"{label}={json.dumps(audit[key], ensure_ascii=False)}"
+                     for label, key in fields if key in audit)+'（完整细节见 report.json）'
+
+
 def render_markdown(report):
     lines = ['# Normal 训练与连续验证汇总', '',
              '只读派生统计；不重新认证。训练小局、连续游玩小局与整路线尝试分开。运行中快照可能尚未完整。', '',
@@ -426,8 +444,8 @@ def render_markdown(report):
                     lines += ['首候选直接评估初始冻结模型，没有新训练阶段。', '']
             lines += [f"### Cycle {cycle['cycle']}（{cycle['status']}）", '',
                       f"模型：`{cycle.get('model_sha256') or train.get('model_sha256') or '尚无最终模型'}`", '',
-                      f"游玩选择方式：{play.get('selection') or '未声明'}；策略种子：{play.get('policy_seed')}；PRNG：{play.get('policy_prng')}；采样审计：{json.dumps(play.get('sampling_audit'), ensure_ascii=False)}。", '',
-                      f"动作接口：{play.get('action_interface') or '未声明'}；变体：{play.get('variant')}；接口审计：{json.dumps(play.get('action_interface_audit'), ensure_ascii=False)}。", '',
+                      f"游玩选择方式：{selection_markdown(play)}；策略种子：{play.get('policy_seed')}；PRNG：{play.get('policy_prng')}；采样审计：{json.dumps(play.get('sampling_audit'), ensure_ascii=False)}。", '',
+                      f"动作接口：{play.get('action_interface') or '未声明'}；变体：{play.get('variant')}；接口审计：{interface_audit_markdown(play.get('action_interface_audit'))}。", '',
                       f"训练动作族：{train['action_schema_family']}；接口：{train.get('action_interface') or '未声明'}；动作数：{train.get('actions')}。",
                       f"训练：{train['status']}；主记录完整小局 {train['python_completed_rounds']}；Lua 待核对 {train['native_unconfirmed_rounds']}；未完成片段记录 {train['partial_records']}。", '',
                       '| 对手 | 训练胜/负/平 | 连续验证小局胜/负/平 | 未通过审计的游玩观察胜/负/平 |',
@@ -463,9 +481,9 @@ def render_markdown(report):
                       '| 对手 | 训练胜/负/平 | Lua 待核对胜/负/平 |', '|---|---:|---:|']
             tables = [summary['rounds'], summary['native_unconfirmed_by_opponent']]
         else:
-            lines += [f"选择方式：{summary.get('selection') or '未声明'}；策略种子：{summary.get('policy_seed')}；PRNG：{summary.get('policy_prng')}。",
+            lines += [f"选择方式：{selection_markdown(summary)}；策略种子：{summary.get('policy_seed')}；PRNG：{summary.get('policy_prng')}。",
                       f"评估类型：{summary.get('evaluation_kind') or '未声明'}；采样审计：{json.dumps(summary.get('sampling_audit'), ensure_ascii=False)}。",
-                      f"动作接口：{summary.get('action_interface') or '未声明'}；变体：{summary.get('variant')}；接口审计：{json.dumps(summary.get('action_interface_audit'), ensure_ascii=False)}。", '']
+                      f"动作接口：{summary.get('action_interface') or '未声明'}；变体：{summary.get('variant')}；接口审计：{interface_audit_markdown(summary.get('action_interface_audit'))}。", '']
             lines += ['| 对手 | 已审计游玩小局胜/负/平 | 未终审/无效观察胜/负/平 |', '|---|---:|---:|']
             tables = [summary['rounds'], summary['unverified_observed_rounds']]
         for opponent in sorted(set().union(*(set(table) for table in tables)), key=int):

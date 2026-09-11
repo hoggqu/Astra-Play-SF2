@@ -79,6 +79,31 @@ def reliability_fixture(root, scores):
 
 
 class ReportTests(unittest.TestCase):
+    def test_markdown_compacts_interface_audit_and_labels_selection_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = reliability_fixture(Path(folder), [0])
+            play = campaign/'cycle-001/continuous'
+            raw = json.loads((play/'result.json').read_text())
+            raw['action_interface_audit'].update(action_interface='ken_actions16_pulsed_normals_v2',
+                selection='deterministic_argmax', package_sha256={'large-private-detail': 'a'*1000})
+            write(play/'result.json', raw)
+            for report in (summarize([campaign]), summarize(continuous_paths=[play])):
+                before = json.dumps(report, sort_keys=True)
+                markdown = render_markdown(report)
+                self.assertIn('deterministic_argmax（来源：action_interface_audit.selection）', markdown)
+                self.assertIn('ok=true；checked_matches=20', markdown)
+                self.assertIn('interface="ken_actions16_pulsed_normals_v2"', markdown)
+                self.assertIn('完整细节见 report.json', markdown)
+                self.assertNotIn('large-private-detail', markdown)
+                self.assertNotIn('a'*1000, markdown)
+                self.assertEqual(json.dumps(report, sort_keys=True), before)
+                self.assertIn('large-private-detail', before)
+            raw['selection'] = 'categorical_softmax'
+            write(play/'result.json', raw)
+            markdown = render_markdown(summarize(continuous_paths=[play]))
+            self.assertIn('选择方式：categorical_softmax；', markdown)
+            self.assertNotIn('来源：action_interface_audit.selection', markdown)
+
     def test_pipeline_full20_uses_nested_exit_code_and_never_pools_candidates(self):
         with tempfile.TemporaryDirectory() as folder:
             path = reliability_fixture(Path(folder), [9, 9])
