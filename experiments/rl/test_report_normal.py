@@ -79,6 +79,56 @@ def reliability_fixture(root, scores):
 
 
 class ReportTests(unittest.TestCase):
+    def test_pipeline_full20_uses_nested_exit_code_and_never_pools_candidates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = reliability_fixture(Path(folder), [9, 9])
+            result = json.loads((path/'result.json').read_text())
+            result['schema'] = 'astra.rl-reliability-pipeline.v1'
+            for cycle in result['cycles']:
+                cycle['continuous'] = {'status': 'complete', 'exit_code': cycle.pop('exit_codes')['continuous']}
+            write(path/'result.json', result)
+            run = summarize([path])['campaigns'][0]
+            self.assertEqual(run['kind'], 'reliability_pipeline_actions16')
+            self.assertEqual(run['action_schema_family'], 'actions16')
+            self.assertEqual(run['reliability']['completed_candidate_evaluations'], 2)
+            self.assertFalse(run['reliability']['goal_achieved'])
+            self.assertEqual(run['aggregate']['attempt_counts']['rl_gameplay_clear'], 18)
+            self.assertEqual(run['cycles'][0]['training']['status'], 'not_applicable')
+            self.assertEqual(run['cycles'][0]['pipeline_stages']['continuous']['exit_code'], 0)
+            result['cycles'][1]['continuous']['exit_code'] = 1
+            write(path/'result.json', result)
+            changed = summarize([path])['campaigns'][0]
+            self.assertEqual(changed['cycles'][1]['reliability']['status'], 'invalid')
+
+    def test_pipeline_unevaluated_prefetch_is_neither_loss_nor_completed_candidate(self):
+        for state in ('prefetching', 'ready', 'cancelled', 'not_evaluated_after_goal'):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as folder:
+                path = reliability_fixture(Path(folder), [10])
+                result = json.loads((path/'result.json').read_text())
+                result['schema'] = 'astra.rl-reliability-pipeline.v1'
+                first = result['cycles'][0]
+                first['continuous'] = {'status': 'complete', 'exit_code': first.pop('exit_codes')['continuous']}
+                result['cycles'].append({'ordinal': 2, 'status': state, 'model_sha256': 'prefetched',
+                    'train': {'status': state, 'retained_progress': {'completed_update_steps': 256}}})
+                write(path/'result.json', result)
+                if state != 'prefetching':
+                    write(path/'cycle-002/train/result.json', {'schema': 'astra.rl-batch-prototype.actions16.v1',
+                        'status': 'invalid' if state == 'cancelled' else 'complete',
+                        'actions': 16, 'model_sha256': 'prefetched'})
+                report = summarize([path])
+                run = report['campaigns'][0]
+                self.assertEqual(run['issues'], [])
+                self.assertEqual(run['reliability']['qualifying_candidates'], [1])
+                self.assertEqual(run['reliability']['completed_candidate_evaluations'], 1)
+                self.assertEqual(run['aggregate']['attempt_counts'], {'rl_gameplay_clear': 10, 'loss': 10})
+                candidate = run['cycles'][1]['reliability']
+                self.assertEqual(candidate['status'], state)
+                self.assertFalse(candidate['evaluation_started'])
+                self.assertFalse(candidate['goal_achieved'])
+                self.assertIsNone(candidate['clear_rate'])
+                self.assertEqual(run['cycles'][1]['continuous']['attempt_counts'], {})
+                self.assertIn('预取/取消状态不算通关、失败或完整评估批次', render_markdown(report))
+
     def test_reliability_candidates_do_not_pool_and_first_has_no_training(self):
         with tempfile.TemporaryDirectory() as folder:
             path = reliability_fixture(Path(folder), [9, 9])

@@ -14,7 +14,8 @@ NAMES = {0: 'Ryu', 1: 'Honda', 2: 'Blanka', 3: 'Guile', 5: 'Chun-Li', 6: 'Zangie
          7: 'Dhalsim', 8: 'Bison', 9: 'Sagat', 10: 'Balrog', 11: 'Vega'}
 SCHEMAS = {'astra.rl-campaign.v1': 'legacy_rpc', 'astra.rl-native-campaign.v1': 'native_batch',
            'astra.rl-native-campaign.actions16.v1': 'native_batch_actions16',
-           'astra.rl-reliability-campaign.v1': 'reliability_actions16'}
+           'astra.rl-reliability-campaign.v1': 'reliability_actions16',
+           'astra.rl-reliability-pipeline.v1': 'reliability_pipeline_actions16'}
 TRAINING_SCHEMAS = ('astra.rl-scaled.v1', 'astra.rl-batch-prototype.v1',
                     'astra.rl-batch-prototype.actions16.v1')
 CONTINUOUS_SCHEMAS = ('astra.rl-continuous.v1', 'astra.rl-continuous.actions16.v1')
@@ -258,7 +259,10 @@ def reliability_candidate(cycle, play):
     counts = play['attempt_counts']
     matches = [m['path'] for a in attempts for m in a['matches']]
     errors = []
-    if play['status'] == 'invalid' or cycle.get('status') == 'invalid' or counts.get('invalid'):
+    unevaluated = not attempts and play['status'] == 'not_started'
+    if unevaluated and cycle.get('status') in ('prefetching', 'ready', 'cancelled', 'not_evaluated_after_goal'):
+        state = cycle['status']
+    elif play['status'] == 'invalid' or cycle.get('status') == 'invalid' or counts.get('invalid'):
         state = 'invalid'
     elif play['status'] != 'complete' or play['audit_state'] == 'pending' or cycle.get('status') != 'complete':
         state = 'pending'
@@ -277,6 +281,8 @@ def reliability_candidate(cycle, play):
             if audit.get('ok') is not True or audit.get(key) != len(matches):
                 errors.append('Missing or incomplete '+field)
         code = cycle.get('exit_codes', {}).get('continuous')
+        if code is None:
+            code = cycle.get('continuous', {}).get('exit_code')
         if code != (0 if counts.get('rl_gameplay_clear') else 1):
             errors.append('Evaluation exit code differs from outcomes or is missing')
         if sum(counts.get(k, 0) for k in ('rl_gameplay_clear','loss')) != 20:
@@ -285,6 +291,7 @@ def reliability_candidate(cycle, play):
             state = 'invalid'
     clears = counts.get('rl_gameplay_clear', 0)
     return {'status': state, 'required_attempts': 20, 'required_clears': 10,
+            'evaluation_started': not unevaluated,
             'model_sha256': cycle.get('model_sha256'), 'observed_attempts': len(attempts),
             'attempt_counts': counts, 'clears': clears, 'losses': counts.get('loss', 0),
             'clear_rate': clears/20 if state == 'complete' else None,
@@ -322,11 +329,13 @@ def summarize_campaign(path):
                                  'training': training_summary(folder/'train', issues),
                                  'continuous': continuous_summary(folder/'continuous', report['kind'] != 'legacy_rpc', issues,
                                                                   interface_required=report['action_schema_family'] == 'actions16')}
-        if report['kind'] == 'reliability_actions16':
+        if report['kind'].startswith('reliability_'):
             if ordinal == 1 and not (folder/'train').exists():
                 item['training']['status'] = 'not_applicable'
                 item['training']['note'] = 'Initial frozen candidate is evaluated before any new training'
             item['reliability'] = reliability_candidate(cycle, item['continuous'])
+            if report['kind'] == 'reliability_pipeline_actions16':
+                item['pipeline_stages'] = {key: cycle.get(key) for key in ('train', 'continuous')}
         report['cycles'].append(item)
     def combine(tables):
         combined = {}
@@ -352,10 +361,12 @@ def summarize_campaign(path):
         'invalid_stages': [{'cycle': c['cycle'], 'stage': name}
                            for c in report['cycles'] for name in ('training', 'continuous')
                            if c[name]['status'] == 'invalid']}
-    if report['kind'] == 'reliability_actions16':
+    if report['kind'].startswith('reliability_'):
         qualified = [c['cycle'] for c in report['cycles'] if c['reliability']['goal_achieved']]
         report['reliability'] = {'qualifying_candidates': qualified,
             'goal_achieved': result.get('status') == 'complete' and bool(qualified),
+            'candidate_status_counts': dict(Counter(c['reliability']['status'] for c in report['cycles'])),
+            'completed_candidate_evaluations': sum(c['reliability']['status'] == 'complete' for c in report['cycles']),
             'aggregation_rule': 'Candidate-specific full20 only; aggregate totals never establish success'}
     return report
 
@@ -407,6 +418,8 @@ def render_markdown(report):
                 lines += [f"候选 {cycle['cycle']} 完整 20 币检查：{measured['status']}；已观察 {measured['observed_attempts']} 币；"
                           f"通关 {measured['clears']} / 失败 {measured['losses']}；完整批次通关率：{rate}；达标：{measured['goal_achieved']}。",
                           f"本候选失败对手：{json.dumps(measured['failed_opponents'], ensure_ascii=False)}。", '']
+                if not measured['evaluation_started']:
+                    lines += ['此候选尚未进行连续验证；预取/取消状态不算通关、失败或完整评估批次。', '']
                 if measured['errors']:
                     lines += ['完整批次问题：'+'；'.join(measured['errors']), '']
                 if train['status'] == 'not_applicable':
