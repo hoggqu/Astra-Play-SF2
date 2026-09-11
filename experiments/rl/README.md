@@ -2,7 +2,8 @@
 
 实验分支：`codex/rl-experiment`。正式 V4 策略、`astra-sf2 verify` 和主分支不变。
 这是实际 MAME 环境中的 PPO 神经网络训练，不是修改 Lua 规则或模拟胜率。
-首轮实机结果见[实验记录](RESULTS.md)：闭环跑通，模型尚未提高评估胜率。
+首轮 4096 次决策的实机结果见[试跑记录](RESULTS.md)；扩大采样与两个种子的
+102400 次决策实验见[并行训练记录](SCALED_RESULTS.md)。评估小局不等于通关率。
 
 ## 安装与运行
 
@@ -75,8 +76,10 @@ python -m experiments.rl.train --dataset .local/rl-data/blanka-001/manifest.json
 ### 共享 Linux 主机的资源限制
 
 本次远端为 13900KS / 32 个逻辑 CPU、WSL 可见约 47 GiB RAM。经用户调整，
-整个任务上限设为 `CPUQuota=1200%`、`MemoryMax=16G`、`MemorySwapMax=0`、
-`Nice=10`、`TasksMax=512`；这是全部 worker 共用的上限，不是每个进程的上限。
+初始单任务测试上限为 12 个逻辑 CPU / 16 GiB。用户进一步允许增加资源后，
+采用两组各 8 个 worker 的独立种子实验，每组设 `CPUQuota=1000%`、
+`MemoryMax=12G`、`MemorySwapMax=0`、`Nice=10`、`TasksMax=512`，
+合计上限为 20 个逻辑 CPU / 24 GiB。这是各组全部 worker 共用的上限。
 使用 CPU-only PyTorch，4090 不参与本轮训练。保持桌面应用有资源余量。
 
 在有 systemd 的 Linux 上，可将完整 Python 命令放入单个 transient service；
@@ -84,20 +87,21 @@ python -m experiments.rl.train --dataset .local/rl-data/blanka-001/manifest.json
 
 ```sh
 systemd-run --unit=astra-rl-train-001 \
-  --property=CPUQuota=1200% --property=MemoryMax=16G \
+  --property=CPUQuota=1000% --property=MemoryMax=12G \
   --property=MemorySwapMax=0 --property=Nice=10 --property=TasksMax=512 \
   --property=RuntimeMaxSec=3600 --working-directory="$PWD" \
   --setenv=ASTRA_SF2_CONFIG="$ASTRA_SF2_CONFIG" \
   --setenv=OMP_NUM_THREADS=1 --setenv=MKL_NUM_THREADS=1 --setenv=OPENBLAS_NUM_THREADS=1 \
   "$PWD/.local/rl-venv/bin/python" -m experiments.rl.train \
   --dataset .local/rl-data/blanka-001/manifest.json \
-  --output .local/rl-runs/train-001 --workers 4 --steps 102400 --eval-every 10240
+  --output .local/rl-runs/train-001 --workers 8 --steps 102400 --eval-every 10240
 journalctl -u astra-rl-train-001 -f
 ```
 
 这是可选的 Linux 运维方式，需要运行者有创建服务的权限。Windows/macOS 的
 直接 Python 入口保持可用，但这段 Linux 资源限制命令不适用于它们。
-同一资源预算下顺序执行采集、benchmark 和训练，避免多服务各自占满上限。
+采集和 benchmark 顺序执行；两个训练服务可并行，但需合并计算资源上限，
+不能给每个服务都分配整台机器的预算。
 
 ## 首版 pilot 的实验设计
 
@@ -125,8 +129,8 @@ SB3 seed 控制模型和等待抽样，不会重新设置游戏内部随机种�
 模型一次训练预算结束时可能正在回合中，该片段单列，不假装输赢。
 
 训练允许读档、暂停与同步步进。正式游戏仍要求不读档、不 continue、不在对局
-中暂停；本实验不会生成发行版的正式认证。下一阶段应收集多个自然开局、按
-开局分离训练/评估，再研究连续推理和全路线验证。
+中暂停；本实验不会生成发行版的正式认证。并行版本已经按自然开局分离
+训练/评估，但样本规模仍小；还需扩大开局覆盖，再研究连续推理和全路线验证。
 
 ## 输出与耗时
 
