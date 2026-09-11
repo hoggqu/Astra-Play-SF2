@@ -17,6 +17,7 @@ from stable_baselines3 import PPO
 from astra_play_sf2.config import atomic_json
 from astra_play_sf2.runner import sha256
 from .projection_teacher import ProjectionTeacher
+from .env import ACTION_NAMES
 
 
 class InterfaceOnlyEnv(gym.Env):
@@ -139,15 +140,42 @@ def create_model(initial, seed):
     return model
 
 
+def fitting_weights(actions, opponents, fit, balance_opponents=False, balance_actions=False):
+    """Fit-only frequency estimates; combined sample weights have fit mean one."""
+    weights = np.ones(len(actions), dtype=np.float32)
+    if balance_opponents:
+        counts = Counter(opponents[fit].tolist())
+        for opponent, count in counts.items():
+            weights[opponents == opponent] *= len(fit)/(len(counts)*count)
+    if balance_actions:
+        counts = Counter(actions[fit].tolist())
+        for action, count in counts.items():
+            weights[actions == action] *= count ** -.5
+    weights /= weights[fit].mean()
+    return torch.as_tensor(weights)
+
+
 def accuracy(policy, observations, actions, indices, batch_size):
     correct, total_loss = 0, 0.
+    confusion = torch.zeros((15, 15), dtype=torch.int64)
     with torch.no_grad():
         for offset in range(0, len(indices), batch_size):
             index = indices[offset:offset+batch_size]
             logits = policy.get_distribution(observations[index]).distribution.logits
-            correct += int((logits.argmax(dim=1) == actions[index]).sum())
-            total_loss += float(torch.nn.functional.cross_entropy(logits, actions[index], reduction='sum'))
-    return {'samples': len(indices), 'accuracy': correct/len(indices), 'cross_entropy': total_loss/len(indices)}
+            predicted = logits.argmax(dim=1)
+            target = actions[index]
+            correct += int((predicted == target).sum())
+            total_loss += float(torch.nn.functional.cross_entropy(logits, target, reduction='sum'))
+            confusion += torch.bincount(target*15+predicted, minlength=225).reshape(15, 15)
+    by_action = {}
+    for action, name in enumerate(ACTION_NAMES):
+        support, predictions, matches = int(confusion[action].sum()), int(confusion[:, action].sum()), int(confusion[action, action])
+        by_action[str(action)] = {'name': name, 'samples': support, 'predictions': predictions,
+                                  'correct': matches, 'recall': matches/support if support else None,
+                                  'precision': matches/predictions if predictions else None}
+    recalls = [row['recall'] for row in by_action.values() if row['recall'] is not None]
+    return {'samples': len(indices), 'accuracy': correct/len(indices), 'cross_entropy': total_loss/len(indices),
+            'macro_action_recall': sum(recalls)/len(recalls), 'by_action': by_action}
 
 
 def train(args):
@@ -160,6 +188,8 @@ def train(args):
               'formal_clear': False, 'method': 'lossy projected-teacher supervised policy initialization',
               'epochs_requested': args.epochs, 'batch_size': args.batch_size, 'seed': args.seed,
               'learning_rate': args.learning_rate, 'balance_opponents': args.balance_opponents,
+              'balance_actions': getattr(args, 'balance_actions', False),
+              'action_weighting': 'inverse square root of fit-only action counts; multiplied by opponent weights; fit sample mean normalized to one',
               'evaluations': [], 'diagnostic_scope': 'whole episodes reserved within train pool; not gameplay dev/holdout',
               'value_network_trained': False, 'environment_steps': 0,
               'source_sha256': sha256(Path(__file__)),
@@ -178,6 +208,8 @@ def train(args):
                       init_model_sha256=sha256(args.init_model) if args.init_model else None,
                       fit_episode_ids=sorted(set(arrays['episode_ids'][fit].tolist())),
                       diagnostic_episode_ids=sorted(set(arrays['episode_ids'][diagnostic].tolist())),
+                      fit_action_samples=dict(Counter(map(str, arrays['actions'][fit]))),
+                      diagnostic_action_samples=dict(Counter(map(str, arrays['actions'][diagnostic]))),
                       fit_opponent_samples=dict(Counter(map(str, arrays['opponents'][fit]))),
                       diagnostic_opponent_samples=dict(Counter(map(str, arrays['opponents'][diagnostic]))))
         model = create_model(args.init_model, args.seed)
@@ -187,11 +219,10 @@ def train(args):
         optimizer = torch.optim.Adam(parameters, lr=args.learning_rate)
         observations = torch.as_tensor(arrays['observations'], dtype=torch.float32)
         actions = torch.as_tensor(arrays['actions'], dtype=torch.long)
-        weights = torch.ones(len(actions), dtype=torch.float32)
-        if args.balance_opponents:
-            counts = Counter(arrays['opponents'][fit].tolist())
-            for opponent, count in counts.items():
-                weights[np.flatnonzero(arrays['opponents'] == opponent)] = len(fit)/(len(counts)*count)
+        weights = fitting_weights(arrays['actions'], arrays['opponents'], fit,
+                                  args.balance_opponents, getattr(args, 'balance_actions', False))
+        result['fit_weight_range'] = [float(weights[fit].min()), float(weights[fit].max())]
+        result['fit_weight_mean'] = float(weights[fit].mean())
         rng = np.random.default_rng(args.seed)
         def measure(epoch):
             policy.set_training_mode(False)
@@ -199,7 +230,9 @@ def train(args):
                    'training_pool_episode_diagnostic': accuracy(policy, observations, actions, diagnostic, args.batch_size)}
             result['evaluations'].append(row)
             atomic_json(output/'result.json', result)
-            print(json.dumps(row), flush=True)
+            print(json.dumps({'epoch': epoch, 'fit_accuracy': row['fit']['accuracy'],
+                              'diagnostic_accuracy': row['training_pool_episode_diagnostic']['accuracy'],
+                              'diagnostic_macro_action_recall': row['training_pool_episode_diagnostic']['macro_action_recall']}), flush=True)
         result['status'] = 'training'
         measure(0)
         for epoch in range(1, args.epochs+1):
@@ -245,6 +278,7 @@ def main():
     parser.add_argument('--learning-rate', type=float, default=3e-4)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--balance-opponents', action='store_true')
+    parser.add_argument('--balance-actions', action='store_true', help='Fit-only inverse-square-root action frequency weighting; combined weights normalized to fit mean one')
     args = parser.parse_args()
     def interrupted(_signal, _frame):
         raise KeyboardInterrupt('BC interrupted')

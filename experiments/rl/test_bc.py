@@ -4,11 +4,14 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+
+import torch
 
 import numpy as np
 from stable_baselines3 import PPO
 from astra_play_sf2.runner import sha256
-from .bc import episode_partition, load_demonstrations, train
+from .bc import accuracy, episode_partition, fitting_weights, load_demonstrations, train
 from .projection_teacher import ProjectionTeacher
 
 
@@ -41,6 +44,37 @@ def fixture(root):
 
 
 class BCTests(unittest.TestCase):
+    def test_action_weighting_uses_fit_only_and_composes_with_opponent_weights(self):
+        actions = np.asarray([0, 0, 0, 0, 1, 1, 1, 1])
+        opponents = np.asarray([2, 2, 2, 2, 3, 3, 3, 3])
+        fit = np.arange(5)
+        weights = fitting_weights(actions, opponents, fit, balance_actions=True)
+        self.assertAlmostEqual(float(weights[fit].mean()), 1.)
+        self.assertAlmostEqual(float(weights[4]/weights[0]), 2.)
+        combined = fitting_weights(actions, opponents, fit, True, True)
+        self.assertAlmostEqual(float(combined[fit].mean()), 1., places=6)
+        self.assertAlmostEqual(float(combined[4]/combined[0]), 8.)
+        # Changing only diagnostic action labels cannot alter fit weights.
+        changed = actions.copy()
+        changed[5:] = 14
+        torch.testing.assert_close(weights[fit], fitting_weights(changed, opponents, fit, balance_actions=True)[fit])
+
+    def test_action_precision_recall_and_absent_actions(self):
+        class Policy:
+            def get_distribution(self, observations):
+                return SimpleNamespace(distribution=SimpleNamespace(logits=observations))
+        logits = torch.full((4, 15), -10.)
+        logits[torch.arange(4), torch.tensor([0, 1, 1, 2])] = 10.
+        result = accuracy(Policy(), logits, torch.tensor([0, 0, 1, 1]), np.arange(4), 3)
+        self.assertEqual(result['accuracy'], .5)
+        self.assertEqual(result['macro_action_recall'], .5)
+        self.assertEqual(result['by_action']['0']['recall'], .5)
+        self.assertEqual(result['by_action']['0']['precision'], 1.)
+        self.assertEqual(result['by_action']['1']['precision'], .5)
+        self.assertIsNone(result['by_action']['2']['recall'])
+        self.assertEqual(result['by_action']['2']['precision'], 0.)
+        self.assertIsNone(result['by_action']['14']['precision'])
+
     def test_whole_episode_partition_keeps_opponents_in_both_sets(self):
         episodes = np.repeat(np.arange(4), 3)
         opponents = np.repeat([1, 2, 1, 2], 3)
@@ -81,7 +115,7 @@ class BCTests(unittest.TestCase):
             demos, dataset = fixture(root)
             args = argparse.Namespace(demonstrations=demos, dataset=dataset, output=root/'bc',
                                       init_model=None, epochs=2, batch_size=4, learning_rate=.001,
-                                      seed=42, balance_opponents=True)
+                                      seed=42, balance_opponents=True, balance_actions=True)
             result = train(args)
             self.assertEqual(result['status'], 'complete')
             self.assertTrue(result['policy_parameters_changed'])
