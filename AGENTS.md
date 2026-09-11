@@ -95,6 +95,16 @@ Project-local commands and the ROM compatibility requirement are detailed in
 
 ## Development
 
+- Training knowledge is included as portable documentation: read
+  [training method](docs/training-method.md), [training history](docs/training-history.md)
+  and [matchup lessons](docs/matchup-lessons.md) when asked to understand or improve
+  the policy. These Chinese-language guides replace the need for the private
+  historical Skill when learning the method; they contain no raw run data.
+  The release provides verification, not the old checkpoint collectors or batch
+  trainer. Do not invent a `train` command or assume private scripts are present.
+  New training needs an isolated experiment and explicit new policy identity;
+  reading these guides alone is not an instruction to start playing or training.
+
 - Code: `src/astra_play_sf2`; packaged Lua/JSON: `assets`; tests: `tests`.
   Run `python -m unittest discover -s tests -v` and build/install the wheel.
   CI defines Windows/Linux/macOS checks without an emulator or ROM.

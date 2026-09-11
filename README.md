@@ -98,6 +98,13 @@ The Python tooling is designed for macOS, Linux, and Windows. CI defines unit te
 
 ## Working with an agent
 
+The repository includes our [training method](docs/training-method.md),
+[development history](docs/training-history.md), and [matchup lessons](docs/matchup-lessons.md)
+(in Chinese), distilled from the original local Skill. They explain failure-led
+practice, paired experiments, held-out openings, efficient batches and frozen
+natural-coin validation. Historical ROMs, save states, logs and per-run datasets
+are excluded. The legacy training tools are not part of the current CLI.
+
 Agents read [AGENTS.md](AGENTS.md) and use the same CLI. One controller owns a session; other agents may inspect completed files. No agent needs to intervene during gameplay. Any visual review must come from actually inspecting that attempt's saved evidence, not from assuming an automatic result is visually verified.
 
 For development:
