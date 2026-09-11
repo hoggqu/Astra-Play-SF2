@@ -106,6 +106,15 @@ Project-local commands and the ROM compatibility requirement are detailed in
   Never bypass a mismatch or patch RAM to make it pass. Legacy v1 evidence lacks
   this check and cannot certify a difficulty; preserve it as provisional history.
 
+## Reinforcement-learning experiment (this branch only)
+
+Read [the RL experiment](experiments/rl/README.md) and [pilot results](experiments/rl/RESULTS.md).
+Run it from the source checkout with its optional dependencies. It owns an isolated
+MAME process, defaults to silent/headless training, and permits state resets and
+synchronous pauses. Never classify its round evaluations as formal clears or put
+its learned model into frozen V4 verification. Raw checkpoints/models/logs remain
+under ignored `.local/`; experimental source belongs in `experiments/rl/`.
+
 ## Development
 
 - Training knowledge is included as portable documentation: read

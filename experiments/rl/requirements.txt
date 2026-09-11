@@ -1,0 +1,2 @@
+# Optional research environment; the standard CLI keeps no runtime dependencies.
+stable-baselines3==2.7.1

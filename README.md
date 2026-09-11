@@ -2,6 +2,8 @@
 
 This project was completed autonomously by Astra from start to finish. Human involvement was limited to discussion and setting verification goals, without constraining implementation methods or approaches.
 
+**Experimental branch:** A separate [reinforcement-learning pilot](experiments/rl/README.md) trains a local PPO policy in MAME. Training results are separate from frozen V4 verification.
+
 [中文说明](README.zh-CN.md) · [Runtime architecture](docs/architecture.md)
 
 ![GPT-Astra playing Street Fighter II as Ken at an arcade cabinet](docs/images/astra-plays-sf2.png)

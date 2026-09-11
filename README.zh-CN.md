@@ -2,6 +2,8 @@
 
 本项目全程由 Astra 自主完成，人工未约束实现方法和思路，只参与讨论和设置验证目标。
 
+**实验分支：** 新增独立的[强化学习试验](experiments/rl/README.md)，用本地 PPO 模型在 MAME 中训练；训练成绩与冻结 V4 的正式验证分别统计。
+
 ![GPT-Astra 在街机前使用 Ken 玩街霸 II 的卡通插画](docs/images/astra-plays-sf2.png)
 
 **0.1.3 Windows 修复：** 对局进度与终态文件分开发布，解决轮询读取和
