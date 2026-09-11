@@ -218,6 +218,101 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn('provisional',report['round_stats_basis'])
         with self.assertRaises(ValueError): record_review(self.run,'l3-001','reviewer','approve')
 
+    def enable_entry(self):
+        entry = self.run/'training/runtime/entry.lua'
+        entry.write_text('-- fixture native entry controller', encoding='utf-8')
+        self.manifest['runtime_sha256']['entry.lua'] = digest(entry)
+        idle = dict(task_boot=0, task_attract=8, task_credit=0, task_input=0,
+                    task_game=0, mode=10, playback=1, ending=0, fade_busy=0)
+        start = dict(idle, task_attract=0, task_credit=8, mode=4)
+        self.attempt['readiness'] = {
+            kind: dict(kind=kind, status='ready', frames=20, max_frames=9000,
+                       stable_frames=2, required_stable_frames=2, state=state)
+            for kind, state in [('coin', idle), ('start', start)]}
+        self.seal()
+
+    def test_native_entry_evidence_required_only_for_entry_runtime(self):
+        self.assertTrue(audit_run(self.run)['ok'])  # Original 0.1.1 has no entry.lua.
+        self.enable_entry()
+        self.assertTrue(audit_run(self.run)['ok'])
+        del self.attempt['readiness']
+        self.seal()
+        self.assertFalse(audit_run(self.run)['ok'])
+
+    def test_entry_refuses_continue_ending_boot_and_unready_start(self):
+        self.enable_entry()
+        original = copy.deepcopy(self.attempt['readiness'])
+        for kind, changes in [('coin', {'task_boot': 8}),
+                              ('coin', {'task_input': 1, 'task_game': 8}),
+                              ('coin', {'task_game': 8, 'ending': 1}),
+                              ('coin', {'task_attract': 0}),
+                              ('coin', {'task_credit': 8}),
+                              ('coin', {'playback': 0}),
+                              ('start', {'task_game': 1}),
+                              ('start', {'task_credit': 0}),
+                              ('start', {'task_attract': 8}),
+                              ('start', {'mode': 2}),
+                              ('start', {'fade_busy': 1}),
+                              ('start', {'playback': 0})]:
+            with self.subTest(kind=kind, changes=changes):
+                self.attempt['readiness'] = copy.deepcopy(original)
+                self.attempt['readiness'][kind]['state'].update(changes)
+                self.seal()
+                self.assertFalse(audit_run(self.run)['ok'])
+        # Real ending cleanup leaves this flag stale until later attract init.
+        self.attempt['readiness'] = copy.deepcopy(original)
+        for result in self.attempt['readiness'].values():
+            result['state']['ending'] = 1
+        self.attempt['readiness']['coin']['state']['fade_busy'] = 1
+        self.seal()
+        self.assertTrue(audit_run(self.run)['ok'])
+
+    def test_malformed_entry_evidence_is_audit_failure_without_crash(self):
+        self.enable_entry()
+        original = copy.deepcopy(self.attempt['readiness'])
+        for location in ('readiness', 'result', 'state'):
+            for value in (None, [], ['bad']):
+                with self.subTest(location=location, value=value):
+                    self.attempt['readiness'] = copy.deepcopy(original)
+                    if location == 'readiness':
+                        self.attempt['readiness'] = value
+                    elif location == 'result':
+                        self.attempt['readiness']['coin'] = value
+                    else:
+                        self.attempt['readiness']['coin']['state'] = value
+                    self.seal()
+                    self.assertFalse(audit_run(self.run)['ok'])
+        for location in ('readiness', 'result', 'state'):
+            with self.subTest(missing=location):
+                self.attempt['readiness'] = copy.deepcopy(original)
+                if location == 'readiness':
+                    del self.attempt['readiness']
+                elif location == 'result':
+                    del self.attempt['readiness']['coin']
+                else:
+                    del self.attempt['readiness']['coin']['state']
+                self.seal()
+                self.assertFalse(audit_run(self.run)['ok'])
+        self.attempt['readiness'] = copy.deepcopy(original)
+        self.attempt['readiness']['coin']['error'] = 'native failure'
+        self.seal()
+        self.assertFalse(audit_run(self.run)['ok'])
+        self.attempt['readiness']['coin']['error'] = ''
+        self.seal()
+        self.assertTrue(audit_run(self.run)['ok'])
+
+    def test_entry_timeout_and_inconsistent_readiness_counters_refused(self):
+        self.enable_entry()
+        original = copy.deepcopy(self.attempt['readiness'])
+        for updates in [dict(status='timeout'), dict(kind='start'), dict(frames=1),
+                        dict(frames=9001), dict(frames=True), dict(max_frames=12000),
+                        dict(stable_frames=1), dict(required_stable_frames=1)]:
+            with self.subTest(updates=updates):
+                self.attempt['readiness'] = copy.deepcopy(original)
+                self.attempt['readiness']['coin'].update(updates)
+                self.seal()
+                self.assertFalse(audit_run(self.run)['ok'])
+
     def test_boot_configuration_and_internal_reading_must_match(self):
         original = (self.run/'boot-config.xml').read_text()
         for content in (original.replace('value="4" />', 'value="0" />'),

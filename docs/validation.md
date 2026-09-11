@@ -1,5 +1,36 @@
 # Validation history and portability
 
+## Native entry readiness — 0.1.2, 2026-09-11
+
+The [entry readiness change](entry-readiness.md) replaces fixed 9000-frame idle
+blocks with neutral native-state waits. Frozen V4 fighter/Core/selection hashes
+are unchanged. Tests used macOS 26.5.2 arm64, Python 3.12.14, MAME 0.288 and
+`sf2` World 910522.
+
+- A normal-speed startup diagnostic reached coin readiness in **580 frames,
+  about 9.9 seconds**, plus the existing five-second autoboot stage. Start
+  readiness took 33 native frames after coin input.
+- A separate passive diagnostic rejected coin readiness during an active game
+  with a two-frame budget. It then let the game lose naturally and finish its
+  Continue countdown before accepting a new coin, followed by a verified new
+  Ken R1. These intentional idle losses are setup diagnostics, not policy trials.
+- Source-runner smoke test `20260911T080337Z-da4d9e5a`: Normal, two attempts,
+  fast speed, **2/2 gameplay clears**, **44/2/0 round W/L/D**, both visually
+  inspected and approved. First/second coin waits were 580/5726 frames; Start
+  waits were 33/48 frames. The same MAME process handled both attempts without
+  reset, load or Continue. The second wait allowed the native ending to finish.
+  Internal difficulty, entry readiness and continuous-play audit all passed.
+- The smoke runtime included the same optional passive local preview module
+  recorded in its hashes. No native Windows/Linux run or new five-level
+  win-rate certification is claimed here.
+- **65 local unit tests passed.** The wheel was built and installed in an
+  isolated environment, then CLI help, runtime staging and evidence review were
+  exercised outside the checkout without `PYTHONPATH`.
+
+Failed diagnostics were retained, including the early version that checked
+title mode but missed its fade wait. The final check requires fade completion
+before sending Start. No diagnostic failure was reclassified as a policy win.
+
 ## Difficulty validity correction — 0.1.1
 
 The [difficulty investigation](difficulty-fix.md) reproduced a startup bug:

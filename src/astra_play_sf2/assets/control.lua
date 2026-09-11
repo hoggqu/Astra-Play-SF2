@@ -4,6 +4,7 @@ if play_busy and play_busy() then error('Cannot reload training controls during 
 training_continuous_guard_version=1
 training_train_guard_version=1
 function guard_training_action()
+ if entry_busy and entry_busy() then error('Native entry wait is running') end
  if train_busy and train_busy() then error('Training match is running; use train_abort() to stop') end
  if play_busy and play_busy() then error('Continuous play is locked; use play_abort() to stop explicitly') end
 end

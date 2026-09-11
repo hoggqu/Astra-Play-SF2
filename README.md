@@ -11,6 +11,9 @@ using Normal despite a different DIP readback. Difficulty is now configured
 before boot and verified in game RAM. Historical cross-difficulty claims need
 revalidation. See [diagnosis and evidence rules](docs/difficulty-fix.md).
 
+**0.1.2 startup improvement:** coin and Start now wait for native readiness,
+returning early instead of always idling 9000 frames. See [entry checks](docs/entry-readiness.md).
+
 Play **Street Fighter II: The World Warrior (World 910522)** as Ken with a fixed Lua policy and a Python command-line runner. Gameplay runs locally in MAME; it needs no AI model, API key, or online service.
 
 The runner uses ordinary player-one controls and current game state. Each difficulty boots an isolated, preconfigured session, then uses natural game completion and coin insertion between attempts at that level. It does not load states, continue a defeated game, reset between attempts, or pause inside a match to change its policy.

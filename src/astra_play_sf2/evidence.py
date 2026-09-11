@@ -119,6 +119,41 @@ def _snapshot_difficulties(value, level):
                 _snapshot_difficulties(child, level)
 
 
+def _entry_readiness(attempt):
+    readiness = attempt['readiness']
+    _require(isinstance(readiness, dict), 'Native readiness evidence must be an object')
+    _require(set(readiness) == {'coin', 'start'}, 'Missing native coin/start readiness evidence')
+    for kind in ('coin', 'start'):
+        result = readiness[kind]
+        _require(isinstance(result, dict), 'Native '+kind+' readiness result must be an object')
+        _require(result.get('error', '') == '', 'Native '+kind+' readiness recorded an error')
+        _require(result.get('kind') == kind and result.get('status') == 'ready',
+                 'Native '+kind+' readiness was not reached')
+        for key in ('frames', 'max_frames', 'stable_frames', 'required_stable_frames'):
+            _require(type(result.get(key)) is int, 'Invalid readiness frame counter: '+key)
+        _require(result['max_frames'] == 9000 and result['required_stable_frames'] == 2
+                 and result['stable_frames'] == 2 and 2 <= result['frames'] <= result['max_frames'],
+                 'Readiness budget or stable-frame evidence differs')
+        state = result['state']
+        _require(isinstance(state, dict), 'Native '+kind+' readiness state must be an object')
+        for key in ('task_boot', 'task_attract', 'task_credit', 'task_input', 'task_game',
+                    'mode', 'playback', 'ending', 'fade_busy'):
+            _require(type(state.get(key)) is int and 0 <= state[key] <= (65535 if key == 'mode' else 255),
+                     'Missing/invalid native readiness state: '+key)
+        _require(state['task_boot'] == state['task_input'] == state['task_game'] == 0
+                 and state['playback'] == 1,
+                 'Native readiness overlaps boot, human game/continue, or ending')
+        if kind == 'coin':
+            _require(state['task_attract'] != 0 and state['task_credit'] == 0,
+                     'Coin readiness requires native attract task')
+        else:
+            _require(state['task_credit'] != 0 and state['task_attract'] == 0 and state['mode'] == 4
+                     and state['fade_busy'] == 0,
+                     'Start readiness requires native credit task in Start-input state after fade')
+        # Ending's diagnostic byte can remain set after its task has exited.
+        # Task ownership above, not stale fighter/ending fields, proves readiness.
+
+
 def _match(run, relative, level, selection, speed, needed, verify_difficulty=True):
     path = _path(run, relative)
     status_rel = str(Path(relative).with_name(Path(relative).stem + '-status.json')).replace('\\', '/')
@@ -258,6 +293,8 @@ def _inspect(run):
         try:
             level = attempt['difficulty']
             _require(level in levels and re.fullmatch(rf'l{level}-[0-9]{{3,}}', attempt['id']), 'Attempt identity/difficulty')
+            if 'entry.lua' in runtime:
+                _entry_readiness(attempt)
             lifecycle = attempt['lifecycle']; needed.add(lifecycle)
             life = _read(_path(run, lifecycle))
             _require(all(life[k] == 0 for k in ('resets', 'loads', 'saves')) and life['active'] is False and not life['violation'], 'Attempt lifecycle violation')

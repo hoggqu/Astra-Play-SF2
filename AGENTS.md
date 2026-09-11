@@ -83,6 +83,10 @@ Project-local commands and the ROM compatibility requirement are detailed in
 - Let the CLI finish. It inserts a new coin after the native game ends. No
   continue, state load/save, or reset between attempts. Each whole opponent
   match runs continuously without pause, speed change or policy replacement.
+- Entry waits use native task readiness and end early; 9000 frames is only a
+  timeout. Do not bypass a failed readiness check or retry coin/Start. See
+  [entry readiness](docs/entry-readiness.md). Shorter waits change the natural
+  RNG timing; do not expect old opponent routes to repeat.
 - No policy edits, training, reset-based opponent selection, failure deletion,
   or state recovery during verification. A timed-out command is never replayed.
   An interruption invalidates the run; preserve it and start a new directory.

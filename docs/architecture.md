@@ -9,7 +9,7 @@ layer calls an AI service. A reviewer can inspect screenshots after the run.
 ```text
 configure → doctor → unique run directory → isolated MAME process
   → preconfigured native DIP at boot → Lua checks DIP and decoded RAM difficulty
-  → wait for native attract
+  → wait until native attract task is ready (9000-frame upper bound)
   → coin/start/Ken selection → validate live R1 → play_match
   → mature match settlement → next opponent / bonus stage
   → defeat: retain loss and let continue countdown expire

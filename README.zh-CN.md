@@ -8,6 +8,9 @@
 现在改为启动前配置，并检查游戏内部 RAM。历史跨难度结论需要复核，详见
 [问题诊断与证据规则](docs/difficulty-fix.md)。
 
+**0.1.2 开局优化：** 按原生游戏状态判断投币和 Start 时机，不再固定空等
+9000 帧，详见[就绪检查与实测](docs/entry-readiness.md)。
+
 用冻结的 V4 策略操控 Ken，在 MAME 中自动验证《Street Fighter II: The World Warrior》通关结果。运行时只需要 Python、MAME 和你自己的兼容 ROM，**不依赖 AI Agent、模型或 API Key**。
 
 [English](README.md) · [Agent 接手](AGENTS.md) · [实现说明](docs/architecture.md)

@@ -243,11 +243,22 @@ def _attempt(run, bridge, attempt, speed, save):
         return "training/" + bridge.state()["screenshot"]
     def advance(frames):
         return action(f"next_round({frames})")
-    # One credit is consumed at initial start. Long neutral wait lets the native
-    # continue countdown and ending finish, without any new Start input or reset.
-    action("act({{9000,''}})")
+    # Native task ownership distinguishes attract from Continue and endings.
+    # Both waits advance neutral frames inside Lua, returning as soon as ready.
+    attempt["readiness"] = {}
+    def gate(kind):
+        state = action(f"wait_{kind}_ready(9000)")
+        result = state.get("session_gate")
+        attempt["readiness"][kind] = result
+        save()
+        if not isinstance(result, dict) or result.get("kind") != kind or result.get("status") != "ready":
+            raise RuntimeError(f"Native {kind} readiness failed: {result}")
+        print(f"{attempt['id']} {kind} ready after {result['frames']} neutral frames", flush=True)
+    gate("coin")
     bridge.send(f"session_begin('{prefix}/session')")
-    action("act({{3,'C'},{120,''},{3,'S'},{120,''},{3,'D'},{12,''}})")
+    action("act({{3,'C'},{1,''}})")
+    gate("start")
+    action("astra_entry.require_ready('start');act({{3,'S'},{120,''},{3,'D'},{12,''}})")
     attempt["images"]["selection"] = image()
     save()
     action("act({{6,'LP'},{120,''}})")

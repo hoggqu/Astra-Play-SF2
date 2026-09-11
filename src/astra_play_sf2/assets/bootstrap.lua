@@ -9,7 +9,7 @@ local ok,err=xpcall(function()
  assert(loadfile('training/runtime/settings.lua'))()
  assert(loadfile('training/runtime/difficulty.lua'))()
  astra_difficulty.check(7-astra_difficulty_bits)
- for _,name in ipairs({'control','fighter','observe','play','bridge','session'}) do
+ for _,name in ipairs({'control','fighter','observe','play','bridge','session','entry'}) do
   assert(loadfile('training/runtime/'..name..'.lua'))()
  end
  observe()

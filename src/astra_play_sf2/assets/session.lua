@@ -28,6 +28,7 @@ function session_begin(path)
  guard_training_action();session_check()
  assert(not formal_active and not job and not advance and manager.machine.paused)
  astra_difficulty.check(7-astra_difficulty_bits)
+ astra_entry.require_ready('coin')
  assert(path:match('^training/[%w_/%-]+$'))
  prefix=path;formal_active=true;persist();formal_event('begin','New ordinary coin; no continue/reset/load/save');observe()
 end

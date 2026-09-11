@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astra-play-sf2"
-version = "0.1.1"
+version = "0.1.2"
 description = "Standalone MAME SF2 Ken verification with a frozen Lua policy"
 readme = "README.md"
 requires-python = ">=3.10"

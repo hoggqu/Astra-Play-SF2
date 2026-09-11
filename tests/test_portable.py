@@ -445,6 +445,36 @@ class RuntimeTests(TemporaryCase):
         self.assertFalse((Path(value["data_dir"]) / "verify.lock").exists())
         self.assertTrue((run / "evidence-sha256.json").exists())
 
+    def test_coin_gate_failure_never_inserts_coin_or_starts_session(self):
+        for number, result in enumerate((None, {'kind': 'coin', 'status': 'timeout'},
+                       {'kind': 'coin', 'status': 'error'}, {'kind': 'start', 'status': 'ready'})):
+            with self.subTest(result=result):
+                bridge = Mock()
+                bridge.send.return_value = {'session_gate': result}
+                attempt = {'id': 'l3-001', 'difficulty': 3}
+                with self.assertRaisesRegex(RuntimeError, 'Native coin readiness failed'):
+                    runner._attempt(self.root / str(number), bridge, attempt, 'normal', Mock())
+                bridge.send.assert_called_once_with("speed('normal');wait_coin_ready(9000)")
+                self.assertEqual(attempt['readiness']['coin'], result)
+
+    def test_start_gate_timeout_does_not_retry_coin_or_send_start(self):
+        bridge = Mock()
+        def send(command):
+            if 'wait_coin_ready' in command:
+                return {'session_gate': {'kind': 'coin', 'status': 'ready', 'frames': 583}}
+            if 'wait_start_ready' in command:
+                return {'session_gate': {'kind': 'start', 'status': 'timeout', 'frames': 9000}}
+            return {}
+        bridge.send.side_effect = send
+        attempt = {'id': 'l3-001', 'difficulty': 3}
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'Native start readiness failed'):
+            runner._attempt(self.root, bridge, attempt, 'normal', Mock())
+        commands = [c.args[0] for c in bridge.send.call_args_list]
+        self.assertEqual(commands, ["speed('normal');wait_coin_ready(9000)",
+            "session_begin('training/attempts/l3-001/session')",
+            "speed('normal');act({{3,'C'},{1,''}})", "speed('normal');wait_start_ready(9000)"])
+        self.assertEqual(attempt['readiness']['start']['status'], 'timeout')
+
     def test_initialization_failure_is_preserved_without_launch(self):
         value = {"mame": "fake", "rom_dir": "fake", "data_dir": str(self.root / "data")}
         for stage in ("stage_runtime", "boot_config"):

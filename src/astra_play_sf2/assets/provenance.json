@@ -23,7 +23,7 @@
     "control.lua": {
       "origin": "control.lua",
       "original_sha256": "62aeb355a8de58b684c26dfa02e00fdaa97c40f38f31137b28435ded6b528432",
-      "sha256": "ce5948cd70d003b43766ab1b461e9c75b8e28a4dfc22610f6f1a330b9cf16e43",
+      "sha256": "5fa46606b4ecdc3b242aec36fa01f93699c42f5bb9e76feb66b16a02ef907e52",
       "unchanged": false
     },
     "bridge.lua": {
@@ -35,7 +35,7 @@
     "observe.lua": {
       "origin": "observe.lua",
       "original_sha256": "ade9cc1fedcdd5891ad2da660d1bdbaf36e7f75629c5e3a499e6ea8b09d1d587",
-      "sha256": "4b003391a1b13f6ecda7e4908f15ef05903bac0c4cbe80dfd3f5685133c70fe1",
+      "sha256": "2fbae5ae61713e41ef54d813bb73ec3565f9e6cbbe05da5fb3feafb6d1303651",
       "unchanged": false
     },
     "play.lua": {

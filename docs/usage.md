@@ -27,6 +27,14 @@ A fresh `verify` creates a new run directory and one preconfigured MAME session 
 
 Without `--consecutive`, the runner uses the requested bounded attempt count. The speed is chosen before play. A failed game is allowed to finish naturally before a new coin; no continue, soft reset, hard reset, or state restoration substitutes for that transition. Each level boots a separate preconfigured process. All attempts within that level share it; a loss does not restart the emulator.
 
+From 0.1.2, the runner waits for native new-game readiness instead of always
+idling for 9000 frames. It inserts a coin when the attract task is active and
+the preceding game has exited, then waits for the title screen to accept Start.
+Each wait has a 9000-frame timeout; timeout invalidates the run without retrying
+coin or Start. The CLI prints actual neutral frames waited. These waits use the
+selected speed and never pause or alter an active policy-controlled match.
+See [native entry readiness](entry-readiness.md) for the state checks and evidence.
+
 Do not start another runner, attach a second input sender, reload Lua, alter policy files, or pause a live match. If you stop the process or something fails, retain the run and audit it; do not splice successful fragments into a complete attempt. A later command starts a new session rather than repairing the old record into a win.
 
 A single-level run uses `astra.run.v2`. For `--difficulty all`, the root report
