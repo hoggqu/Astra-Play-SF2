@@ -10,6 +10,8 @@ __pycache__/
 .DS_Store
 /config.json
 /.local-validation/
+# Agent-installed emulator, ROMs, downloaded archives and run data.
+/.local/
 /runs/
 *.zip
 *.7z

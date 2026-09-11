@@ -12,6 +12,8 @@
 
 先安装 **Python 3.10+**、**MAME 0.288**，准备兼容 `sf2 / World 910522` 的 ROM。[安装文档](docs/installation.md)提供官方软件下载入口。项目不包含模拟器、ROM 或存档。
 
+本地缺少依赖时，允许 Agent 按 [AGENTS.md](AGENTS.md#missing-dependencies-automatic-project-local-setup) 自行下载并安装到项目的 `.local/` 目录，不必仅因文件缺失就停下询问。MAME 使用推荐的固定版本链接；ROM 可从授权来源或你已提供的下载地址获取，下载后必须通过兼容性校验。
+
 macOS / Linux，在下载并解压的项目目录中执行：
 
 ```sh
@@ -37,7 +39,7 @@ Windows PowerShell：
 .\.venv\Scripts\astra-sf2.exe verify --difficulty 3
 ```
 
-安装脚本创建虚拟环境并安装 CLI。MAME、Python 和 ROM 由使用者准备；`doctor` 会检查版本、ROM 校验和输出目录。无需修改脚本中的路径。
+安装脚本创建虚拟环境并安装 CLI。MAME、Python 和 ROM 可由使用者准备，或交给 Agent 按安装说明补齐；bootstrap 本身不包含模拟器或 ROM 下载器。`doctor` 会检查版本、ROM 校验和输出目录，无需修改脚本中的路径。
 
 ## 验证规则和批量运行
 

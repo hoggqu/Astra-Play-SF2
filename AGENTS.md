@@ -9,14 +9,60 @@ model is not part of its runtime. Use the same commands as a human operator.
    [verification rules](docs/verification.md).
 2. Install with `scripts/bootstrap.sh` (macOS/Linux) or `scripts/bootstrap.ps1`
    (Windows). Python 3.10+ and MAME **0.288** are required.
-3. Find the user's MAME executable and compatible `sf2` ROM directory. If missing,
-   ask for those paths; do not download or distribute game ROMs.
+3. Find an existing MAME 0.288 executable and compatible `sf2` ROM directory.
+   If either is missing, you are authorized to download and install the missing
+   dependency **inside this checkout** using the procedure below. Do not stop
+   merely to ask permission for a project-local download or installation.
 4. Run `astra-sf2 configure --mame PATH --rom-dir PATH` and `astra-sf2 doctor`.
 5. Run `astra-sf2 verify --difficulty 3`. Default: one attempt, normal speed.
    `--speed fast` enables fast-forward when requested. `--difficulty all
    --attempts 5` runs five attempts at each level, Normal (3) to Hardest (7).
 6. Keep the printed run directory. Run `astra-sf2 audit RUN_DIR` and
    `astra-sf2 report RUN_DIR`. Report every attempt, loss and invalid execution.
+
+## Missing dependencies: automatic project-local setup
+
+Use `.local/` under the repository root; it is ignored by Git. Keep downloads in
+`.local/downloads/`, MAME in `.local/mame/0.288/`, compatible ROMs in
+`.local/roms/`, and verification data in `.local/data/`. Reuse a working existing
+installation when available. Do not overwrite the original `MAME/` training
+archive or replace dependencies used by an active session.
+
+- **MAME:** detect the OS and CPU architecture, then download, extract or build
+  **0.288** from the recommended links below. Install the executable and required
+  runtime files together inside the project. On macOS/Linux, build the tagged
+  source if a matching binary is unavailable. Follow the platform build
+  instructions for prerequisites; a system-required privilege/login prompt may
+  need the user, but ordinary local setup does not require another confirmation.
+- **ROM:** you may search for and download a compatible `sf2` set from an
+  official/licensed source or a download location the user has authorized you
+  to use. A provided download URL is sufficient direction to proceed without
+  asking again for a local file path. Preserve the archive as
+  `.local/roms/sf2.zip`; do not change another SFII edition's filename to make it
+  appear compatible. We do not currently have a verified authorized public
+  download link for the required World 910522 arcade set. If no usable source
+  is available, finish the emulator/CLI setup, then ask for the compatible ROM
+  or its download location. Do not substitute the unrelated free games below.
+- **Verify and continue:** confirm `mame -version`, run `configure` with the
+  actual local executable/ROM/data paths, then `doctor`. Proceed with the
+  requested verification only after its version and ROM audit pass. A filename
+  alone is not a compatibility check. Record source URLs, downloaded file hashes
+  and versions locally; do not add downloads or ROMs to commits or releases.
+
+### Recommended downloads (checked 2026-09-11)
+
+| Dependency/platform | Recommended source |
+|---|---|
+| MAME 0.288 release and asset list | [Official pinned release](https://github.com/mamedev/mame/releases/tag/mame0288) |
+| Windows x64 | [mame0288b_x64.exe](https://github.com/mamedev/mame/releases/download/mame0288/mame0288b_x64.exe) — extract this self-extracting archive into the local MAME directory |
+| Windows ARM64 | [mame0288b_arm64.exe](https://github.com/mamedev/mame/releases/download/mame0288/mame0288b_arm64.exe) |
+| Official binary checksums | [SHA256SUMS](https://github.com/mamedev/mame/releases/download/mame0288/SHA256SUMS) |
+| macOS/Linux and source builds | [Source at tag mame0288](https://github.com/mamedev/mame/tree/mame0288) and [platform build instructions](https://docs.mamedev.org/initialsetup/compilingmame.html) — use this tag, even if the documentation describes a newer version |
+| Python | [Official downloads](https://www.python.org/downloads/) — Python 3.10+ |
+| Authorized free MAME games, for reference only | [MAME's free ROM downloads](https://www.mamedev.org/roms/) — **does not include this project's SF2 set** |
+
+Project-local commands and the ROM compatibility requirement are detailed in
+[installation](docs/installation.md#agent-managed-project-local-installation).
 
 ## Verification contract
 

@@ -1,14 +1,82 @@
 # Installation
 
-Install Python and MAME yourself, then install this project into a virtual environment. The project does not download emulator binaries or game data.
+Install this project into a virtual environment after preparing Python and
+MAME. You may set up dependencies manually or let an Agent download and install
+missing dependencies inside the checkout as described below. The bootstrap
+scripts install the Python CLI; they do not themselves download MAME or ROMs.
 
 ## Prerequisites
 
 - **Python 3.10 or newer**, with `venv` and pip. Official installers are available from [Python.org](https://www.python.org/downloads/). Python 3.10 and 3.12 are the CI test versions; this is not a promise that every newer interpreter has been tested.
 - **MAME 0.288**, specifically. Use the [official 0.288 release](https://github.com/mamedev/mame/releases/tag/mame0288), not an unpinned latest-release link. The [MAME downloads page](https://www.mamedev.org/release.html) provides official Windows binaries and source information. For macOS or Linux builds, follow [MAME's build documentation](https://docs.mamedev.org/initialsetup/compilingmame.html) with the `mame0288` source tag; that documentation may describe a newer release, so keep the source version pinned.
-- Your own ROM files compatible with MAME's **`sf2` / World 910522** driver. This project does not include or locate a ROM download. Other Street Fighter II editions or revisions are not interchangeable with the validated memory layout.
+- ROM files compatible with MAME's **`sf2` / World 910522** driver, obtained from an official/licensed source or a download location you authorize the Agent to use. The repository does not bundle ROMs. Other Street Fighter II editions or revisions are not interchangeable with the validated memory layout.
 
 Do not substitute a newer package-manager MAME build and assume it has the same behavior. `doctor` checks the configured environment before a run. Configure the actual emulator executable, not an application folder or an unrelated launcher.
+
+## Agent-managed project-local installation
+
+When dependencies are missing, an Agent may download, extract and install them
+without asking again for permission for these local steps. The recommended
+links, including Windows x64/ARM64 binaries and official checksums, are in
+[AGENTS.md](../AGENTS.md#recommended-downloads-checked-2026-09-11).
+
+Use this layout, all beneath the Git-ignored `.local/` directory:
+
+```text
+.local/
+  downloads/       downloaded installers and source archives
+  mame/0.288/      matching executable, runtime files or source/build tree
+  roms/sf2.zip     compatible World 910522 arcade ROM set
+  data/           isolated verification runs and reports
+```
+
+For a macOS/Linux source installation, start with the pinned official source:
+
+```sh
+mkdir -p .local/downloads .local/mame .local/roms .local/data
+git clone --depth 1 --branch mame0288 https://github.com/mamedev/mame.git .local/mame/0.288
+```
+
+Run this clone command only if that destination does not already exist. Build
+inside it using the [official instructions for your OS](https://docs.mamedev.org/initialsetup/compilingmame.html),
+including the required compiler and SDL dependencies. Use existing system build
+tools where possible; a source build is not a promise that every prerequisite
+is already installed. Do not replace the pinned version with a newer release
+merely because a package manager offers it.
+
+For Windows, extract the matching official self-extracting archive into
+`.local/mame/0.288/`. Keep its supporting runtime files with `mame.exe`.
+Verify downloaded binaries against the release's `SHA256SUMS` when available.
+
+The Agent may also find and download the compatible ROM from an authorized
+source or a location you have supplied. **No verified authorized public download
+link for this exact SF2 set is currently recommended.** The
+[MAME free-ROM catalog](https://www.mamedev.org/roms/) contains other games, not
+this set. If a usable ROM source is unavailable, the Agent should complete
+everything else first, then request the ROM or its download location. ROMs do
+not need an installer: put the correct archive in `.local/roms/` and audit it.
+
+Once the files are present, from the project root:
+
+```sh
+# macOS/Linux; use the executable name actually produced by your build
+.venv/bin/astra-sf2 configure --mame .local/mame/0.288/mame --rom-dir .local/roms --data-dir .local/data
+.venv/bin/astra-sf2 doctor
+.venv/bin/astra-sf2 verify --difficulty 3
+```
+
+```powershell
+# Windows
+.\.venv\Scripts\astra-sf2.exe configure --mame .local\mame\0.288\mame.exe --rom-dir .local\roms --data-dir .local\data
+.\.venv\Scripts\astra-sf2.exe doctor
+.\.venv\Scripts\astra-sf2.exe verify --difficulty 3
+```
+
+Install the CLI with the bootstrap instructions below before these commands.
+`configure` resolves the paths and stores configuration in the usual per-user
+location; use `ASTRA_SF2_CONFIG` if the configuration should also live in the
+project. Proceed to `verify` only after `doctor` passes. Downloads, executables,
+ROMs and private run records stay local and are excluded from Git and releases.
 
 ## macOS and Linux
 
