@@ -128,12 +128,25 @@ def training_summary(folder, issues):
                         'python_steps_in_completed_rounds': sum(row.get('steps', 0) for row in primary.values()),
                         'native_unconfirmed_rounds': len(unconfirmed),
                         'partial_records': len(worker_partials), 'native_error_partial_records': len(native_partials)})
+    indexed, unindexed = {}, []
+    for row in full:
+        number = row.get('round')
+        if type(number) is int and number >= 1:
+            indexed.setdefault(number, []).append(row)
+        else:
+            unindexed.append(row)
+            if 'round' in row:
+                issues.append({'path': str(folder), 'episode': row.get('episode'),
+                               'error': 'Invalid training round index; retained only in unindexed and total counts'})
     return {**action_identity(result), 'status': result.get('status', 'not_started'), 'schema': result.get('schema'),
+            'round_chain': result.get('round_chain'), 'training_protocol': result.get('training_protocol'),
             'difficulty': result.get('difficulty'), 'seed': result.get('seed'),
             'dataset_sha256': result.get('dataset_sha256'), 'result_sha256': digest,
             'model_sha256': result.get('model_sha256'), 'init_model_sha256': result.get('init_model_sha256'),
             'actual_steps_reported': result.get('actual_steps'), 'error': result.get('error'),
             'python_completed_rounds': len(full), 'rounds': rounds_table(full),
+            'rounds_by_index': {str(number): rounds_table(rows) for number, rows in sorted(indexed.items())},
+            'rounds_without_index': rounds_table(unindexed), 'rounds_without_index_count': len(unindexed),
             'native_unconfirmed_rounds': len(pending), 'native_unconfirmed_by_opponent': rounds_table(pending),
             'partial_records': len(partials), 'duplicate_lines_excluded': duplicates, 'workers': workers}
 
@@ -239,6 +252,7 @@ def summarize_campaign(path):
     if result.get('schema') not in SCHEMAS:
         raise ValueError(f'Unsupported/missing campaign schema: {path}')
     report = {**action_identity(result), 'path': str(path), 'name': path.name, 'schema': result['schema'], 'kind': SCHEMAS[result['schema']],
+              'round_chain': result.get('round_chain'), 'training_protocol': result.get('training_protocol'),
               'result_sha256': digest, 'status': result.get('status'), 'error': result.get('error'),
               'difficulty': result.get('difficulty'), 'seed': result.get('seed'),
               'dataset_sha256': result.get('dataset_sha256'), 'initial_model_sha256': result.get('initial_model_sha256'),
@@ -286,6 +300,20 @@ def summarize_campaign(path):
     return report
 
 
+def training_round_markdown(summary):
+    lines = [f"训练协议：{summary.get('training_protocol') or '未声明'}；round_chain：{summary.get('round_chain')}。", '',
+             '以下为完整训练小局的轮次分层，已包含在训练总数中，不另行累加；旧记录不推断轮次。', '',
+             '| 轮次 | 对手 | 胜/负/平 |', '|---|---|---:|']
+    groups = [(f'R{number}', table) for number, table in summary['rounds_by_index'].items()]
+    if summary['rounds_without_index']:
+        groups.append(('未记录有效轮次', summary['rounds_without_index']))
+    for label, table in groups:
+        for opponent in sorted(table, key=int):
+            values = '/'.join(str(table[opponent][key]) for key in OUTCOMES)
+            lines.append(f"| {label} | {NAMES[int(opponent)]} | {values} |")
+    return lines+['']
+
+
 def render_markdown(report):
     lines = ['# Normal 训练与连续验证汇总', '',
              '只读派生统计；不重新认证。训练小局、连续游玩小局与整路线尝试分开。运行中快照可能尚未完整。', '',
@@ -293,6 +321,7 @@ def render_markdown(report):
     for run in report['campaigns']:
         lines += [f"## {run['name']}", '', f"类型：{run['kind']}；状态：{run['status']}；难度：{run['difficulty']}；种子：{run['seed']}。",
                   f"动作族：{run['action_schema_family']}；接口：{run.get('action_interface') or '未声明'}；动作数：{run.get('actions')}。",
+                  f"运行声明训练协议：{run.get('training_protocol') or '未声明'}；round_chain：{run.get('round_chain')}。",
                   f"路径：`{run['path']}`", f"结果快照 SHA-256：`{run['result_sha256']}`", '']
         totals = run['aggregate']
         lines += [f"全路线结果：{totals['attempt_counts'].get('rl_gameplay_clear', 0)} 通关 / {totals['attempt_counts'].get('loss', 0)} 失败 / {totals['attempt_counts'].get('invalid', 0)} 无效 / {totals['attempt_counts'].get('pending', 0)} 待定；失败对手：{json.dumps(totals['failed_opponents'], ensure_ascii=False)}。", '']
@@ -312,6 +341,7 @@ def render_markdown(report):
             for opponent in sorted(set().union(*(set(table) for table in tables)), key=int):
                 counts = ['/'.join(str(table.get(opponent, {}).get(k, 0)) for k in OUTCOMES) for table in tables]
                 lines.append(f"| {NAMES[int(opponent)]} | {' | '.join(counts)} |")
+            lines += ['']+training_round_markdown(train)
             lines += ['', '整路线尝试：', '', '| 尝试 | 结果 | 已赢对手数 | 失利对手 |', '|---|---|---:|---|']
             if not play['attempts']:
                 lines.append(f"| — | {play['status']}；尚无尝试结果 | — | — |")
@@ -344,6 +374,8 @@ def render_markdown(report):
         for opponent in sorted(set().union(*(set(table) for table in tables)), key=int):
             counts = ['/'.join(str(table.get(opponent, {}).get(k, 0)) for k in OUTCOMES) for table in tables]
             lines.append(f"| {NAMES[int(opponent)]} | {' | '.join(counts)} |")
+        if item['kind'] == 'training':
+            lines += ['']+training_round_markdown(summary)
         if item['kind'] == 'continuous':
             lines += ['', '| 整路线尝试 | 结果 | 已赢对手数 | 失利对手 |', '|---|---|---:|---|']
             for attempt in summary['attempts']:

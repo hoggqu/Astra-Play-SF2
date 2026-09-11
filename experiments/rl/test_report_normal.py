@@ -41,6 +41,58 @@ def fixture(root, native=False):
 
 
 class ReportTests(unittest.TestCase):
+    def test_round_chain_training_layers_are_subsets_not_additional_rounds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            train = campaign/'cycle-001/train'
+            path = train/'result.json'
+            result = json.loads(path.read_text())
+            result.update(round_chain=True, training_protocol='native_match_round_episodes_v1')
+            write(path, result)
+            path = train/'worker-00/episodes.jsonl'
+            original = json.loads(path.read_text().splitlines()[0])
+            rows = [dict(original, round=1), dict(original, episode=2, round=2, outcome='loss'),
+                    dict(original, episode=3, round=4, outcome='draw'),
+                    dict(original, episode=4, native_round={'round': 3}),
+                    dict(original, episode=5, round=True)]
+            path.write_text('\n'.join(json.dumps(row) for row in [rows[0]]+rows)+'\n')
+            before = path.read_bytes()
+            report = summarize(training_paths=[train, train])
+            summary = report['standalone'][0]['summary']
+            self.assertEqual(summary['python_completed_rounds'], 5)
+            self.assertEqual(summary['rounds']['2']['rounds'], 5)
+            self.assertTrue(summary['round_chain'])
+            self.assertEqual(summary['training_protocol'], 'native_match_round_episodes_v1')
+            self.assertEqual(list(summary['rounds_by_index']), ['1', '2', '4'])
+            self.assertEqual(summary['rounds_by_index']['4']['2']['draw'], 1)
+            self.assertEqual(summary['rounds_without_index_count'], 2)
+            indexed = sum(row['rounds'] for table in summary['rounds_by_index'].values() for row in table.values())
+            self.assertEqual(indexed+summary['rounds_without_index_count'], 5)
+            self.assertEqual(summary['duplicate_lines_excluded'], 1)
+            self.assertEqual(summary['native_unconfirmed_rounds'], 0)
+            self.assertEqual(path.read_bytes(), before)
+            markdown = render_markdown(report)
+            self.assertIn('| R4 | Blanka | 0/0/1 |', markdown)
+            self.assertIn('未记录有效轮次', markdown)
+            self.assertNotIn('| R3 |', markdown)
+
+    def test_legacy_round_index_absence_stays_unknown_and_campaign_protocol_survives(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            path = campaign/'result.json'
+            result = json.loads(path.read_text())
+            result['training_protocol'] = 'native_match_round_episodes_v1'
+            write(path, result)
+            report = summarize([campaign])
+            run = report['campaigns'][0]
+            train = run['cycles'][0]['training']
+            self.assertEqual(train['rounds_by_index'], {})
+            self.assertEqual(train['rounds_without_index_count'], 1)
+            self.assertIsNone(train['round_chain'])
+            self.assertIsNone(train['training_protocol'])
+            self.assertEqual(run['training_protocol'], 'native_match_round_episodes_v1')
+            self.assertIn('运行声明训练协议：native_match_round_episodes_v1', render_markdown(report))
+
     def test_actions16_mixed_campaigns_and_standalone_keep_separate_identities(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
