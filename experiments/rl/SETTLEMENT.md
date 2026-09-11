@@ -10,7 +10,7 @@ could not classify. Both original runs remain invalid; repaired replays use
 new source identities and new output directories.
 
 The first adapter version handled these two specific cases; its implementation
-is retained in Git history. The current default uses version 2 below.
+is retained in Git history. The current default uses version 3 below.
 
 - **Ken / Chun-Li, zero-health time draw:** both fighters were alive at zero HP
   when time expired. Ken entered the time-loss pose before a late spinning kick
@@ -41,8 +41,9 @@ and premature results. They are distinct from native emulator replays. See
 
 ## Version 2: native time-result protocol
 
-`settlement.lua` now contains version 2, automatically staged by both batch and
-native continuous entry points in the `rl_settlement.lua` runtime role. Never
+Version 2 introduced the protocol below, retained in the current default.
+Both batch and native continuous entry points stage the adapter in the
+`rl_settlement.lua` runtime role. Never
 replace the adapter beneath an active controller. A further Dhalsim time loss retained
 Ken's action 4 in the final KO sprite, demonstrating that enumerating each
 retained action would repeatedly reject genuine native results.
@@ -77,3 +78,44 @@ batch/deployment parity, 102400 and 61440 real PPO decisions, and one continuous
 attempt per resulting model. Those continuous attempts were valid losses;
 they do not demonstrate a clear. `test_settlement_v2.py` includes missing evidence,
 health bounds, score/HP changes, airborne states and early next-round cases.
+
+
+## Version 3: confirm equal-time draws from the natural next round
+
+A later Dhalsim timeout left both time-latched and displayed HP at zero, then
+produced a late KO without changing either pip. Its final poses were outside
+the old draw whitelist. Version 3 retains version 2's win/loss protocol and
+adds a draw confirmation independent of character-specific animation lists:
+
+1. Observe equal, integer time-latched HP in 0..144, matching both fighters'
+   live and displayed HP after time expires; native pips must remain unchanged.
+2. Retain a grounded previous-round snapshot at least 360 native frames after
+   the stop. Changes to pips or displayed/latched HP disqualify the candidate.
+   Actor initialization through zero animation pointers is permitted only
+   after this mature evidence exists.
+3. Require the game's actual full-health, timer-99 next-round opening with the
+   same actors and score. Until then, there is no draw result. Unknown evidence
+   still invalidates; an already invalid Core is never revived.
+
+The terminal row separates the previous round's raw `settled` snapshot from
+its raw next-round `confirmation`. Batch terminal damage reward uses only
+`settled`, preventing next-round health refill from creating spurious reward.
+Continuous play keeps the natural next round and uses its normal readiness and
+input cadence. The adapter never edits snapshots or game RAM.
+
+Validation included the original failing seed's complete 102400-decision PPO
+replay, a same-start-phase 256-decision batch/native-Core replay with 746
+identical settlement frames, and a separate native continuation probe. In the
+last probe, the draw confirmed at frame 3797, round 2 began at 3886, and the
+next twelve frames consumed the intended light-punch input. There was one
+initial training checkpoint load and no subsequent load or pause through frame
+3898. These are training diagnostics, not a formal clear.
+
+`test_settlement_v3.py` covers rejected evidence and separated terminal reward.
+The portable `draw_parity`, `draw_block_probe`, and `draw_continuation` diagnostic
+modules require captured private action plans and explicitly staged diagnostic
+runtimes; they are not normal verification entry points. A paused checkpoint
+reset and a live in-batch reset have different first-input phases: reproducing
+the captured draw required the live reset phase. Ordinary 64-decision batch
+boundaries were ruled out as the cause. Input-start normalization remains a
+separate experiment; this settlement fix does not change action timing.

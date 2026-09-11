@@ -41,6 +41,63 @@ def fixture(root, native=False):
 
 
 class ReportTests(unittest.TestCase):
+    def test_actions16_mixed_campaigns_and_standalone_keep_separate_identities(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            old = fixture(root/'old', native=True)
+            new = fixture(root/'new', native=True)
+            train, play = new/'cycle-001/train', new/'cycle-001/continuous'
+            for path, schema in ((new, 'astra.rl-native-campaign.actions16.v1'),
+                                 (train, 'astra.rl-batch-prototype.actions16.v1'),
+                                 (play, 'astra.rl-continuous.actions16.v1')):
+                result = json.loads((path/'result.json').read_text())
+                result.update(schema=schema, action_interface='ken_actions16_lp_mp_uppercut_v1', actions=16)
+                if path == play:
+                    result['action_interface_audit'] = {'ok': True}
+                write(path/'result.json', result)
+            report = summarize([old, new, new], [train], [play])
+            self.assertEqual(len(report['campaigns']), 2)
+            self.assertEqual(report['standalone'], [])
+            self.assertEqual(len(report['duplicate_input_paths_ignored']), 3)
+            self.assertEqual([r['action_schema_family'] for r in report['campaigns']],
+                             ['legacy_actions15', 'actions16'])
+            for run in report['campaigns']:
+                self.assertEqual(run['aggregate']['attempt_counts'], {'loss': 1})
+                self.assertEqual(run['aggregate']['training_rounds']['2']['win'], 1)
+            report = summarize(training_paths=[train], continuous_paths=[play])
+            self.assertEqual([r['classification'] for r in report['standalone']], ['complete', 'complete'])
+            self.assertTrue(all(r['summary']['actions'] == 16 for r in report['standalone']))
+            self.assertIn('ken_actions16_lp_mp_uppercut_v1', render_markdown(report))
+
+    def test_actions16_schema_requires_interface_and_native_audits_without_sidecar(self):
+        with tempfile.TemporaryDirectory() as folder:
+            campaign = fixture(Path(folder), native=True)
+            play = campaign/'cycle-001/continuous'
+            path = play/'result.json'
+            result = json.loads(path.read_text())
+            result['schema'] = 'astra.rl-continuous.actions16.v1'
+            write(path, result)
+            summary = summarize(continuous_paths=[play])['standalone'][0]['summary']
+            self.assertTrue(summary['action_interface_audit_required'])
+            self.assertEqual(summary['attempt_counts'], {'pending': 1})
+            result['action_interface_audit'] = {'ok': True}
+            del result['native_timing_audit']
+            write(path, result)
+            self.assertEqual(summarize(continuous_paths=[play])['standalone'][0]['classification'], 'pending')
+            result['native_timing_audit'] = {'ok': True}
+            result['action_interface_audit'] = {'ok': False}
+            write(path, result)
+            self.assertEqual(summarize(continuous_paths=[play])['standalone'][0]['classification'], 'invalid')
+            # Parent schema imposes the interface audit during the child finalization window too.
+            parent = json.loads((campaign/'result.json').read_text())
+            parent['schema'] = 'astra.rl-native-campaign.actions16.v1'
+            write(campaign/'result.json', parent)
+            result['schema'] = 'astra.rl-continuous.v1'
+            del result['action_interface_audit']
+            write(path, result)
+            summary = summarize([campaign])['campaigns'][0]['cycles'][0]['continuous']
+            self.assertEqual(summary['attempt_counts'], {'pending': 1})
+
     def test_action_interface_identity_requires_its_final_audit(self):
         with tempfile.TemporaryDirectory() as folder:
             campaign = fixture(Path(folder), native=True)

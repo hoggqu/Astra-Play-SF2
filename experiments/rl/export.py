@@ -9,6 +9,9 @@ from astra_play_sf2.runner import sha256
 
 
 def lua_literal(value):
+    # bool subclasses int in Python; Lua's literals are lowercase keywords.
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
     if isinstance(value, dict):
         return '{' + ','.join('[' + lua_literal(k) + ']=' + lua_literal(v) for k, v in value.items()) + '}'
     if isinstance(value, (list, tuple)):

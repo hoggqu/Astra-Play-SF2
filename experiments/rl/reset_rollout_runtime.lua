@@ -223,7 +223,10 @@ rl_batch_rpc_subscription=emu.register_frame_done(function()
   assert(not (job or bot or advance or loadwatch or savewatch or play_busy()),'Foreign controller active')
   Speed.apply(m.video,'fast')
   if pending.model then model=pending.model;pending.model=nil end
-  if pending.op=='reset' then reset(pending.reset)
+  if pending.op=='reset_rollout' then
+   assert(pending.count>=1 and pending.count<=256 and pending.resets and #pending.resets>=pending.count)
+   pending.op='rollout';reset(pending.reset)
+  elseif pending.op=='reset' then reset(pending.reset)
   elseif pending.op=='rollout' then
    assert(core and #core.rounds==0,'Reset before batch sampling')
    assert(pending.count>=1 and pending.count<=256 and pending.count%1==0,'Invalid batch size')

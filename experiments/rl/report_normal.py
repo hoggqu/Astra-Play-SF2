@@ -12,8 +12,19 @@ from pathlib import Path
 
 NAMES = {0: 'Ryu', 1: 'Honda', 2: 'Blanka', 3: 'Guile', 5: 'Chun-Li', 6: 'Zangief',
          7: 'Dhalsim', 8: 'Bison', 9: 'Sagat', 10: 'Balrog', 11: 'Vega'}
-SCHEMAS = {'astra.rl-campaign.v1': 'legacy_rpc', 'astra.rl-native-campaign.v1': 'native_batch'}
+SCHEMAS = {'astra.rl-campaign.v1': 'legacy_rpc', 'astra.rl-native-campaign.v1': 'native_batch',
+           'astra.rl-native-campaign.actions16.v1': 'native_batch_actions16'}
+TRAINING_SCHEMAS = ('astra.rl-scaled.v1', 'astra.rl-batch-prototype.v1',
+                    'astra.rl-batch-prototype.actions16.v1')
+CONTINUOUS_SCHEMAS = ('astra.rl-continuous.v1', 'astra.rl-continuous.actions16.v1')
 OUTCOMES = ('win', 'loss', 'draw')
+
+
+def action_identity(result):
+    """Keep declared identity and schema family separate; do not invent an interface."""
+    schema = result.get('schema') or ''
+    return {'action_interface': result.get('action_interface'), 'actions': result.get('actions'),
+            'action_schema_family': ('actions16' if '.actions16.' in schema else 'legacy_actions15') if schema else None}
 
 
 def read_object(path, issues, required=False):
@@ -117,7 +128,7 @@ def training_summary(folder, issues):
                         'python_steps_in_completed_rounds': sum(row.get('steps', 0) for row in primary.values()),
                         'native_unconfirmed_rounds': len(unconfirmed),
                         'partial_records': len(worker_partials), 'native_error_partial_records': len(native_partials)})
-    return {'status': result.get('status', 'not_started'), 'schema': result.get('schema'),
+    return {**action_identity(result), 'status': result.get('status', 'not_started'), 'schema': result.get('schema'),
             'difficulty': result.get('difficulty'), 'seed': result.get('seed'),
             'dataset_sha256': result.get('dataset_sha256'), 'result_sha256': digest,
             'model_sha256': result.get('model_sha256'), 'init_model_sha256': result.get('init_model_sha256'),
@@ -136,9 +147,9 @@ def child_path(base, relative):
     return path
 
 
-def continuous_summary(folder, native_required, issues):
+def continuous_summary(folder, native_required, issues, interface_required=False):
     result, digest = read_object(folder/'result.json', issues)
-    output = {'status': result.get('status', 'not_started'), 'schema': result.get('schema'),
+    output = {**action_identity(result), 'status': result.get('status', 'not_started'), 'schema': result.get('schema'),
               'difficulty': result.get('difficulty'), 'result_sha256': digest,
               'model_sha256': result.get('model_sha256'), 'error': result.get('error'),
               'native_timing': result.get('native_timing', False), 'attempts': [],
@@ -159,7 +170,9 @@ def continuous_summary(folder, native_required, issues):
     output['action_interface_audit'] = result.get('action_interface_audit')
     output['action_interface_protocol'] = interface or None
     output['action_interface_protocol_sha256'] = interface_hash
-    interface_required = interface_path.exists() or 'action_interface' in result
+    interface_required = (interface_required or '.actions16.' in result.get('schema', '') or
+                          interface_path.exists() or 'action_interface' in result)
+    native_required = native_required or '.actions16.' in result.get('schema', '')
     output['action_interface_audit_required'] = interface_required
     audits = [(native_required, result.get('native_timing_audit')),
               (sampling_required, result.get('sampling_audit')),
@@ -225,7 +238,7 @@ def summarize_campaign(path):
     result, digest = read_object(path/'result.json', issues, required=True)
     if result.get('schema') not in SCHEMAS:
         raise ValueError(f'Unsupported/missing campaign schema: {path}')
-    report = {'path': str(path), 'name': path.name, 'schema': result['schema'], 'kind': SCHEMAS[result['schema']],
+    report = {**action_identity(result), 'path': str(path), 'name': path.name, 'schema': result['schema'], 'kind': SCHEMAS[result['schema']],
               'result_sha256': digest, 'status': result.get('status'), 'error': result.get('error'),
               'difficulty': result.get('difficulty'), 'seed': result.get('seed'),
               'dataset_sha256': result.get('dataset_sha256'), 'initial_model_sha256': result.get('initial_model_sha256'),
@@ -244,7 +257,8 @@ def summarize_campaign(path):
         report['cycles'].append({'cycle': ordinal, 'status': cycle.get('status', 'unlisted'),
                                  'model_sha256': cycle.get('model_sha256'), 'stage': cycle.get('stage'),
                                  'training': training_summary(folder/'train', issues),
-                                 'continuous': continuous_summary(folder/'continuous', report['kind'] == 'native_batch', issues)})
+                                 'continuous': continuous_summary(folder/'continuous', report['kind'] != 'legacy_rpc', issues,
+                                                                  interface_required=report['action_schema_family'] == 'actions16')})
     def combine(tables):
         combined = {}
         for table in tables:
@@ -278,6 +292,7 @@ def render_markdown(report):
              'Python 逐局记录为训练主计数；Lua 原生副本不重复计数，尚未确认的记录单列待核对。', '']
     for run in report['campaigns']:
         lines += [f"## {run['name']}", '', f"类型：{run['kind']}；状态：{run['status']}；难度：{run['difficulty']}；种子：{run['seed']}。",
+                  f"动作族：{run['action_schema_family']}；接口：{run.get('action_interface') or '未声明'}；动作数：{run.get('actions')}。",
                   f"路径：`{run['path']}`", f"结果快照 SHA-256：`{run['result_sha256']}`", '']
         totals = run['aggregate']
         lines += [f"全路线结果：{totals['attempt_counts'].get('rl_gameplay_clear', 0)} 通关 / {totals['attempt_counts'].get('loss', 0)} 失败 / {totals['attempt_counts'].get('invalid', 0)} 无效 / {totals['attempt_counts'].get('pending', 0)} 待定；失败对手：{json.dumps(totals['failed_opponents'], ensure_ascii=False)}。", '']
@@ -289,6 +304,7 @@ def render_markdown(report):
                       f"模型：`{cycle.get('model_sha256') or train.get('model_sha256') or '尚无最终模型'}`", '',
                       f"游玩选择方式：{play.get('selection') or '未声明'}；策略种子：{play.get('policy_seed')}；PRNG：{play.get('policy_prng')}；采样审计：{json.dumps(play.get('sampling_audit'), ensure_ascii=False)}。", '',
                       f"动作接口：{play.get('action_interface') or '未声明'}；变体：{play.get('variant')}；接口审计：{json.dumps(play.get('action_interface_audit'), ensure_ascii=False)}。", '',
+                      f"训练动作族：{train['action_schema_family']}；接口：{train.get('action_interface') or '未声明'}；动作数：{train.get('actions')}。",
                       f"训练：{train['status']}；主记录完整小局 {train['python_completed_rounds']}；Lua 待核对 {train['native_unconfirmed_rounds']}；未完成片段记录 {train['partial_records']}。", '',
                       '| 对手 | 训练胜/负/平 | 连续验证小局胜/负/平 | 未通过审计的游玩观察胜/负/平 |',
                       '|---|---:|---:|---:|']
@@ -312,6 +328,7 @@ def render_markdown(report):
         summary = item['summary']
         lines += [f"## 独立{'训练' if item['kind'] == 'training' else '连续验证'}：{item['name']}", '',
                   f"状态：{summary['status']}；分类：{item['classification']}；难度：{summary.get('difficulty')}。",
+                  f"动作族：{summary['action_schema_family']}；接口：{summary.get('action_interface') or '未声明'}；动作数：{summary.get('actions')}。",
                   f"路径：`{item['path']}`", f"结果快照 SHA-256：`{summary['result_sha256']}`",
                   f"模型 SHA-256：`{summary.get('model_sha256') or '尚无最终模型'}`", '']
         if item['kind'] == 'training':
@@ -346,13 +363,13 @@ def summarize_standalone(path, kind):
     issues = []
     raw, _ = read_object(path/'result.json', issues, required=True)
     if kind == 'training':
-        if raw.get('schema') not in ('astra.rl-scaled.v1', 'astra.rl-batch-prototype.v1'):
+        if raw.get('schema') not in TRAINING_SCHEMAS:
             raise ValueError(f'Unsupported standalone training schema: {path}')
         if any(raw.get(key) is True for key in ('benchmark', 'parity', 'native_parity')):
             raise ValueError('Benchmark/parity runs are not training stages')
         summary = training_summary(path, issues)
     else:
-        if raw.get('schema') != 'astra.rl-continuous.v1':
+        if raw.get('schema') not in CONTINUOUS_SCHEMAS:
             raise ValueError(f'Unsupported standalone continuous schema: {path}')
         summary = continuous_summary(path, True, issues)
     state = summary['status']

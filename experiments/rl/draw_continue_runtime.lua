@@ -1,4 +1,4 @@
--- Optional training-only batch sampler. One policy version per rollout request.
+-- TRAINING DIAGNOSTIC ONLY: forced real draw, then uninterrupted native R2.
 local m=manager.machine
 local Core=assert(loadfile('training/runtime/play_core.lua'))()
 Core=assert(loadfile('training/runtime/rl_settlement.lua'))()(Core)
@@ -34,6 +34,9 @@ end
 local function input(text)
  release();for k in (text or ''):gmatch('%S+') do assert(k~='C' and k~='S' and keys[k]):set_value(1) end
 end
+local held_input=''
+local base_input=input
+input=function(text) held_input=text or '';base_input(text) end
 local function hp(s,key) return math.max(0,math.min(144,s[key].hp)) end
 local function reward(before,after,outcome)
  return .25*((hp(before,'p2')-hp(after,'p2'))-(hp(before,'p1')-hp(after,'p1')))/144
@@ -47,6 +50,7 @@ local last_native_time
 -- a transition. This is memory-only until an error, outside the action policy.
 local last_observed,settlement_trace
 local episode_actions
+local harness_loads,harness_answers=0,0
 local function stack(s,reset)
  local f=NN.features(s)
  if reset then history={f,f,f,f} else table.remove(history,1);history[#history+1]=f end
@@ -54,6 +58,7 @@ local function stack(s,reset)
  return out
 end
 local function answer(extra)
+ harness_answers=harness_answers+1
  release();emu.pause()
  local result=extra or {};result.id=pending.id;result.training_only=true
  result.observation=obs;result.state=state;result.episode_start=episode_start
@@ -86,6 +91,7 @@ local function fail(err)
  IO.publish('training/rl-batch-error.json',json({error=tostring(err)})..'\n')
 end
 local function reset(choice)
+ harness_loads=harness_loads+1
  assert(type(choice)=='table' and choice.lead>=0 and choice.lead<=12 and choice.lead%1==0)
  local path=assert(checkpoints[choice.checkpoint+1],'Bad checkpoint index')
  current_checkpoint=choice.checkpoint;current_lead=choice.lead
@@ -162,6 +168,7 @@ rl_batch_frame_subscription=emu.add_machine_frame_notifier(function()
   end
   frames=frames+1;pending.elapsed=pending.elapsed+1
   local s=snapshot();last_observed=s
+  local consumed=held_input
   local effects=core:tick(s)
   if core.round_stop then
    settlement_trace=settlement_trace or {}
@@ -172,6 +179,28 @@ rl_batch_frame_subscription=emu.add_machine_frame_notifier(function()
    pending.native_deferred=effects.rl_deferred_input
   end
   if effects.terminal and not effects.terminal.valid then error(effects.terminal.reason) end
+  if pending.continue_after_draw then
+   assert(pending.native_reference,'Continuation diagnostic must drive native Core')
+   assert(not m.paused,'Unexpected pause inside native continuation')
+   pending.continuation_trace=pending.continuation_trace or {}
+   pending.continuation_trace[#pending.continuation_trace+1]={frame=frames,state=s,
+    consumed_input=consumed,input=effects.input,deferred_input=effects.rl_deferred_input,
+    phase=core.phase,round=core.round,events=effects.events}
+   for _,event in ipairs(effects.events) do
+    if event.kind=='round_start' and event.round==2 then pending.round2_start=frames end
+   end
+   if #core.rounds>0 then
+    assert(core.rounds[1].recognition=='rl-native-equal-time-next-round-v3','Expected captured confirmed draw')
+    if pending.round2_start and frames>=pending.round2_start+12 then
+     assert(harness_loads==1 and harness_answers==0,'Reset or pause occurred during continuation')
+     state=s;obs=stack(s,false)
+     answer({continuous_draw={trace=pending.continuation_trace,round=core.rounds[1],
+      round2_start=pending.round2_start,load_calls=harness_loads,prior_answers=harness_answers,
+      paused_native_frames=0,training_only=true,formal_clear=false}})
+    end
+    return
+   end
+  end
   local done=#core.rounds>0
   if not done and core.phase~='fighting' then input('');return end
   if done or pending.elapsed>=Actions.frames then
@@ -223,7 +252,10 @@ rl_batch_rpc_subscription=emu.register_frame_done(function()
   assert(not (job or bot or advance or loadwatch or savewatch or play_busy()),'Foreign controller active')
   Speed.apply(m.video,'fast')
   if pending.model then model=pending.model;pending.model=nil end
-  if pending.op=='reset' then reset(pending.reset)
+  if pending.op=='reset_rollout' then
+   assert(pending.count>=1 and pending.count<=256 and pending.resets and #pending.resets>=pending.count)
+   pending.op='rollout';reset(pending.reset)
+  elseif pending.op=='reset' then reset(pending.reset)
   elseif pending.op=='rollout' then
    assert(core and #core.rounds==0,'Reset before batch sampling')
    assert(pending.count>=1 and pending.count<=256 and pending.count%1==0,'Invalid batch size')

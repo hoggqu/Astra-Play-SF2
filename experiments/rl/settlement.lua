@@ -1,9 +1,9 @@
--- Experimental result-only adapter v2. Stage as rl_settlement.lua in NEW runs.
+-- Experimental result-only adapter v3. Stage as rl_settlement.lua in NEW runs.
 -- Original Core rules remain; this adds pose-independent TIME-result evidence.
 -- No game RAM/input/state edits. Native callers must deduplicate frame callbacks.
 return function(Core)
  assert(not Core.rl_settlement_adapter,'Do not stack settlement protocol versions')
- Core.rl_settlement_adapter='native-time-pip-v2'
+ Core.rl_settlement_adapter='native-time-pip-and-confirmed-draw-v3'
  local observe,tick,begin=Core.observe_equal_time_latch,Core.tick,Core.begin_round
  local function health(h) return type(h)=='number' and h>=0 and h<=144 and h%1==0 end
  function Core:observe_equal_time_latch(s)
@@ -24,14 +24,52 @@ return function(Core)
  end
  function Core:begin_round(s,effects)
   self.rl_time_award=nil
+  self.rl_draw_evidence=nil;self.rl_draw_disqualified=nil
   return begin(self,s,effects)
  end
  function Core:tick(s)
+  local draw=self.rl_draw_evidence
+  -- Positive native confirmation, BEFORE asking the old Core to process the
+  -- next round. Never revive an invalid Core or overwrite an earlier result.
+  if self.phase=='settling' and draw and draw.mature and not self.rl_draw_disqualified
+   and self.round_stop.timer==0 and self.frame+1<=self.max_frames
+   and Core.opening(s,self.opponent,self.score) then
+   self.frame=self.frame+1
+   local current={s.p1.wins,s.p2.wins}
+   local row={round=self.round,outcome='draw',opening=self.round_opening,
+    stop=self.round_stop,settled=draw.mature.state,settled_frame=draw.mature.frame,
+    confirmation=s,confirmation_frame=self.frame,score=current,frame=self.frame,
+    recognition='rl-native-equal-time-next-round-v3',equal_time=draw.first}
+   self.rounds[#self.rounds+1]=row;self.score=current;self.timeout_guard_open=false
+   self.phase='between';self.between_frame=self.frame;self.ready_frames=1;self.candidate=s
+   return {input='',events={{kind='round_result',round=self.round,result=row}}}
+  end
   local effects=tick(self,s)
   -- Never override an original result, failure or a new-round transition.
   if self.phase~='settling' or self.round_stop.timer~=0 or s.timer~=0 then return effects end
   local a,b=s.p1,s.p2
   local da,db=a.wins-self.score[1],b.wins-self.score[2]
+  if da~=0 or db~=0 then self.rl_draw_disqualified=true end
+  if not self.rl_draw_disqualified then
+   local equal=health(a.timeout_hp) and a.timeout_hp==b.timeout_hp
+    and a.displayed_hp==a.timeout_hp and b.displayed_hp==b.timeout_hp
+   local initializing=draw and draw.mature and a.anim==0 and b.anim==0
+    and a.timeout_hp==0 and b.timeout_hp==0
+    and (a.hp==0 or a.hp==144) and (b.hp==0 or b.hp==144)
+    and a.displayed_hp==a.hp and b.displayed_hp==b.hp
+   if draw and not (equal and a.timeout_hp==draw.hp) and not initializing then
+    self.rl_draw_disqualified=true
+   end
+   if not draw and equal and a.hp==a.timeout_hp and b.hp==b.timeout_hp then
+    draw={hp=a.timeout_hp,first={frame=self.frame,state=s}}
+    self.rl_draw_evidence=draw
+   end
+   if draw and not self.rl_draw_disqualified and equal and a.timeout_hp==draw.hp
+    and self.frame-self.terminal_frame>=self.settle_frames
+    and a.y==40 and b.y==40 and a.x>0 and b.x>0 and a.anim>0 and b.anim>0 then
+    draw.mature={frame=self.frame,state=s}
+   end
+  end
   local outcome=(da==1 and db==0) and 'win' or (da==0 and db==1) and 'loss' or nil
   local award=self.rl_time_award
   if award then

@@ -48,9 +48,9 @@ class BatchRuntimeTests(unittest.TestCase):
                 append=function() end}
             modules['training/runtime/play_core.lua']={opening=function() return true end,new=function()
                 local c={frame=0,phase='fighting',rounds={}}
-                function c:tick()
+                function c:tick(s)
                     self.frame=self.frame+1
-                    if self.frame==terminal_at then self.phase='between';self.rounds[1]={outcome='win'} end
+                    if self.frame==terminal_at then self.phase='between';self.rounds[1]={outcome='win',settled=s} end
                     return {input='HP'}
                 end
                 return c
