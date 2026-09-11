@@ -1,5 +1,7 @@
 # Native TIME assignment: adjacent-frame evidence
 
+[中文说明](SETTLEMENT_TIME_ADJACENT.md)
+
 The separate `settlement_v5.lua` adapter covers a native TIME-loss transition
 observed during experimental PPO training. On the frame that awards the winner
 a pip, SF2 can latch both timeout HP values and replace the loser's live HP with
@@ -34,7 +36,7 @@ zero in-play pauses; it is not a formal attempt or a win-rate sample.
 The separate V5 suites cover both winner directions, missing or inconsistent
 previous evidence, changed pips/latches, wrong sentinels, premature openings,
 airborne settlement, old TIME/draw/double-KO paths and new-round cleanup.
-All 38 tests passed:
+All 39 tests passed:
 
 ```sh
 python -m unittest experiments.rl.test_settlement_v5 \

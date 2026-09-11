@@ -41,6 +41,10 @@ class AdjacentTimeTests(unittest.TestCase):
             self.assertEqual(len(self.core.rounds),0,(field,value))
         s=self.make();self.tick(s,30);self.core.rl_time_previous=None;self.tick(self.award(s),420)
         self.assertEqual(len(self.core.rounds),0)
+    def test_nonadjacent_saved_frame_is_rejected(self):
+        s=self.make();self.tick(s,30);self.core.rl_time_previous.frame-=1
+        self.tick(self.award(s),420);self.assertEqual(len(self.core.rounds),0)
+
     def test_later_hp_reversion_does_not_recreate_old_score_edge(self):
         s=self.make();self.tick(s,30);t=self.award(s);t['p1']['hp']=-2;self.tick(t)
         t['p1']['hp']=-1;self.tick(t,420);self.assertEqual(len(self.core.rounds),0)
