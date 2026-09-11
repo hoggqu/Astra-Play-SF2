@@ -42,6 +42,19 @@ class DatasetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'completed'):
             self.load()
 
+    def test_multi_opponent_preserves_identity_and_requires_per_split_coverage(self):
+        self.data.update(schema='astra.rl-openings.v2', opponents=[0, 2])
+        for split in ('train', 'dev', 'holdout'):
+            p = self.root/f'ryu-{split}.sta'
+            p.write_bytes(p.name.encode())
+            self.data['openings'].append(dict(id=p.stem, path=p.name, sha256=sha256(p),
+                split=split, difficulty=7, opponent=0, status='accepted'))
+        groups, _ = self.load()
+        self.assertTrue(all({row['opponent'] for row in rows} == {0, 2} for rows in groups.values()))
+        self.data['openings'].pop()
+        with self.assertRaisesRegex(ValueError, 'coverage'):
+            self.load()
+
     def test_escape_path_and_wrong_difficulty_rejected(self):
         self.data['openings'][0]['path'] = '../escape.sta'
         with self.assertRaisesRegex(ValueError, 'outside'):

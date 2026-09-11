@@ -25,7 +25,7 @@ jobs:
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -e . -r experiments/rl/requirements.txt lupa==2.8
       - name: Check RL rewards, datasets, evaluation and bounded worker cleanup
-        run: python -m unittest experiments.rl.test_rl experiments.rl.test_runtime experiments.rl.test_collect experiments.rl.test_dataset experiments.rl.test_train -v
+        run: python -m unittest discover -s experiments/rl -t . -v
   windows-lua-status-io:
     name: Windows / real Lua I/O and speed
     runs-on: windows-latest

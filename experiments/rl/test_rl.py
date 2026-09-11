@@ -3,6 +3,8 @@ import unittest
 import json
 import tempfile
 import re
+from collections import deque, Counter
+from unittest.mock import Mock
 from pathlib import Path
 import numpy as np
 from lupa.lua54 import LuaRuntime, LuaError
@@ -15,6 +17,36 @@ def state(hp1=144, hp2=144):
 
 
 class RLTests(unittest.TestCase):
+    def test_multitask_resets_balance_opponents_and_check_selected_actor(self):
+        env = MameEnv.__new__(MameEnv)
+        env.checkpoints = [{'opponent': 0}]+[{'opponent': 2} for _ in range(9)]
+        env.checkpoint_groups = {0: [0], 2: list(range(1, 10))}
+        env.manifest = {'opponent': 0}
+        env.baseline = False
+        env.phase = 'train'
+        env.must_reset = True
+        env.record_partial = Mock()
+        env.history = deque(maxlen=4)
+        def reset_result(_op, _lead, flag):
+            s = state()
+            s['p2']['char'] = env.checkpoints[flag//2]['opponent']
+            return {'reset_confirmed': True, 'state': s}
+        env.rpc = Mock(side_effect=reset_result)
+        counts = Counter()
+        for i in range(1000):
+            obs, _ = env.reset(seed=42 if i==0 else None)
+            counts[env.episode_opponent] += 1
+            self.assertEqual(obs.shape, (344,))
+        self.assertTrue(400 < counts[0] < 600, counts)
+        env.reset(options={'checkpoint': 9, 'lead': 2})
+        self.assertEqual(env.episode_opponent, 2)
+        env.rpc.assert_called_with('reset', 2, 18)
+        bad = state()
+        bad['p2']['char'] = 0
+        env.rpc = Mock(return_value={'reset_confirmed': True, 'state': bad})
+        with self.assertRaisesRegex(RuntimeError, 'actor mismatch'):
+            env.reset(options={'checkpoint': 9})
+
     def test_baseline_mode_mapping_matches_frozen_selection(self):
         root = Path(__file__).resolve().parents[2]
         selected = json.loads((root/'src/astra_play_sf2/assets/selection.json').read_text())

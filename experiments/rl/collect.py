@@ -1,4 +1,4 @@
-"""Collect bounded natural-coin Blanka R1 states, for training only.
+"""Collect bounded natural-coin opponent R1 states, for training only.
 
 No reset, load or game-RAM write is used. Saving can advance native time by a
 frame; both observations are retained. Distinct state bytes are not a claim of
@@ -16,6 +16,22 @@ from astra_play_sf2.config import atomic_json, doctor, load_config
 from astra_play_sf2.opening import make_opening_guard, require_difficulty
 from astra_play_sf2.runner import NAMES, boot_config, mame_command, sha256, stage_runtime
 from astra_play_sf2.transport import Bridge, read_json
+
+
+ALL_OPPONENTS = (0, 1, 2, 3, 5, 6, 7, 10, 11, 9, 8)
+
+
+def requested_opponents(manifest):
+    return tuple(manifest.get('opponents', (manifest.get('opponent', 2),)))
+
+
+def captured_count(manifest, opponent):
+    return sum(row.get('opponent', 2) == opponent for row in manifest['openings'])
+
+
+def collection_complete(manifest):
+    return all(captured_count(manifest, opponent) >= manifest['samples_requested']
+               for opponent in requested_opponents(manifest))
 
 
 class BudgetReached(RuntimeError):
@@ -51,8 +67,11 @@ def split_for(index, samples):
 
 def capture(run, bridge, manifest, attempt, number, initial):
     require_difficulty(initial, manifest['difficulty'])
-    if not make_opening_guard(7-manifest['difficulty'])[1](initial, 2):
-        raise ValueError('Capture requires a visible full-health Blanka R1')
+    opponent = initial['p2']['character']
+    if opponent not in requested_opponents(manifest):
+        raise ValueError('Opponent is outside requested collection')
+    if not make_opening_guard(7-manifest['difficulty'])[1](initial, opponent):
+        raise ValueError('Capture requires a visible full-health opponent R1')
     identifier = f"a{attempt['ordinal']:03d}-m{number:02d}"
     path = Path('checkpoints')/(identifier+'.sta')
     (run/path).parent.mkdir(exist_ok=True)
@@ -60,11 +79,11 @@ def capture(run, bridge, manifest, attempt, number, initial):
     if not (run/path).is_file():
         raise RuntimeError('Native checkpoint was not saved')
     require_difficulty(after, manifest['difficulty'])
-    if not make_opening_guard(7-manifest['difficulty'])[1](after, 2):
-        raise ValueError('Post-save observation is no longer a full-health Blanka R1')
+    if not make_opening_guard(7-manifest['difficulty'])[1](after, opponent):
+        raise ValueError('Post-save observation is no longer a full-health opponent R1')
     digest = sha256(run/path)
     row = {'id': identifier, 'path': path.as_posix(), 'sha256': digest,
-           'difficulty': manifest['difficulty'], 'opponent': 2,
+           'difficulty': manifest['difficulty'], 'opponent': opponent,
            'attempt': attempt['ordinal'], 'match': number,
            'initial_state': initial, 'post_save_state': after}
     duplicate = next((o['id'] for o in manifest['openings'] if o['sha256'] == digest), None)
@@ -72,7 +91,7 @@ def capture(run, bridge, manifest, attempt, number, initial):
         row.update(status='duplicate', duplicate_of=duplicate)
         manifest['rejected_openings'].append(row)
     else:
-        row.update(status='accepted', split=split_for(len(manifest['openings']), manifest['samples_requested']))
+        row.update(status='accepted', split=split_for(captured_count(manifest, opponent), manifest['samples_requested']))
         manifest['openings'].append(row)
     attempt['captures'].append(identifier)
     return row
@@ -107,10 +126,10 @@ def collect_attempt(run, bridge, manifest, attempt, save):
         if not expected or opponent in seen:
             raise RuntimeError('Unexpected native opponent route')
         seen.append(opponent)
-        if opponent == 2:
+        if opponent in requested_opponents(manifest) and captured_count(manifest, opponent) < manifest['samples_requested']:
             capture(run, bridge, manifest, attempt, number, state)
             save()
-            if len(manifest['openings']) >= manifest['samples_requested']:
+            if collection_complete(manifest):
                 attempt.update(status='stopped_after_final_capture', outcome=None)
                 return
         if manifest['matches_started'] >= manifest['max_matches']:
@@ -150,27 +169,30 @@ def collect_attempt(run, bridge, manifest, attempt, save):
             state = advance(1800 if number == 7 else 1200)
 
 
-def collect(config, output, samples=6, max_attempts=12, max_matches=132, max_seconds=900, difficulty=7):
+def collect(config, output, samples=6, max_attempts=12, max_matches=132, max_seconds=900, difficulty=7, opponents=None):
     if type(samples) is not int or samples < 3:
         raise ValueError('At least three samples are needed for train/dev/holdout')
     if any(type(n) is not int or n < 1 for n in (max_attempts, max_matches, max_seconds)):
         raise ValueError('Attempt, match and seconds budgets must be positive integers')
     if type(difficulty) is not int or difficulty not in range(3, 8):
         raise ValueError('Difficulty must be 3..7')
+    opponents = tuple(opponents or (2,))
+    if len(set(opponents)) != len(opponents) or any(type(o) is not int or o not in ALL_OPPONENTS for o in opponents):
+        raise ValueError('Opponents must be unique native CPU character IDs')
     preflight = doctor(config)
     if not preflight['ok']:
         raise RuntimeError('Preflight failed: '+json.dumps(preflight))
     run = Path(output).resolve()
     run.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
-    manifest = {'schema': 'astra.rl-openings.v1', 'training_only': True, 'formal_clear': False,
+    manifest = {'schema': 'astra.rl-openings.v2', 'training_only': True, 'formal_clear': False,
                 'status': 'running', 'created_utc': datetime.now(timezone.utc).isoformat(),
-                'difficulty': difficulty, 'opponent': 2, 'samples_requested': samples,
+                'difficulty': difficulty, 'opponents': list(opponents), 'samples_requested': samples,
                 'max_attempts': max_attempts, 'max_matches': max_matches, 'max_seconds': max_seconds,
                 'matches_started': 0, 'openings': [], 'rejected_openings': [], 'attempts': [],
                 'preflight': preflight, 'platform': platform.platform(), 'python': platform.python_version(),
-                'sampling': 'One boot; natural coins after native game over. One Blanka R1 per attempt. No loads, resets or RAM writes. Saving may advance a frame. Different state hashes do not prove independence.',
-                'split_method': 'Collection order: first N-2 train, penultimate dev, last holdout; no outcome-based selection',
+                'sampling': 'One boot; natural coins after native game over. At most one R1 per requested opponent per attempt. No loads, resets or RAM writes. Saving may advance a frame. Different state hashes do not prove independence.',
+                'split_method': 'Within each opponent, collection order: first N-2 train, penultimate dev, last holdout; no outcome-based selection',
                 'sound': 'none', 'video': 'none',
                 'experiment_sources': {p.name: sha256(p) for p in Path(__file__).parent.iterdir() if p.suffix in ('.py', '.lua')}}
     def save():
@@ -200,10 +222,10 @@ def collect(config, output, samples=6, max_attempts=12, max_matches=132, max_sec
             save()
             collect_attempt(run, bridge, manifest, attempt, save)
             save()
-            print(f"collection attempt {ordinal}: {attempt['outcome'] or attempt['status']}; openings {len(manifest['openings'])}/{samples}", flush=True)
-            if len(manifest['openings']) >= samples:
+            print(f"collection attempt {ordinal}: {attempt['outcome'] or attempt['status']}; openings {len(manifest['openings'])}/{samples*len(opponents)}", flush=True)
+            if collection_complete(manifest):
                 break
-        manifest['status'] = 'complete' if len(manifest['openings']) >= samples else 'budget_exhausted'
+        manifest['status'] = 'complete' if collection_complete(manifest) else 'budget_exhausted'
     except BudgetReached as error:
         manifest.update(status='budget_exhausted', error=str(error))
     except BaseException as error:
@@ -238,7 +260,12 @@ def main():
     parser.add_argument('--max-matches', type=int, default=132)
     parser.add_argument('--max-seconds', type=int, default=900)
     parser.add_argument('--difficulty', type=int, choices=range(3, 8), default=7)
+    parser.add_argument('--opponents', default='2', help='Comma-separated native character IDs, or all; samples is per opponent')
     args = parser.parse_args()
+    try:
+        args.opponents = ALL_OPPONENTS if args.opponents == 'all' else tuple(int(n) for n in args.opponents.split(','))
+    except ValueError:
+        parser.error('opponents must be all or comma-separated integer IDs')
     manifest = collect(load_config(), **vars(args))
     print(json.dumps({'status': manifest['status'], 'samples': len(manifest['openings']), 'wall_seconds': manifest['wall_seconds']}), flush=True)
     return 0 if manifest['status'] == 'complete' else 1

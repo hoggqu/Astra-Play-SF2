@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from .collect import BudgetReached, BoundedBridge, capture, collect, collect_attempt, split_for
+from .collect import BudgetReached, BoundedBridge, capture, collect, collect_attempt, split_for, collection_complete
 
 
 def opening(opponent=2):
@@ -128,6 +128,20 @@ class CollectionTests(unittest.TestCase):
             with self.assertRaises(BudgetReached):
                 bridge.send("act({{3,'C'}})")
         parent.assert_not_called()
+
+    def test_multi_opponent_split_counts_separately_and_requires_all(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = record(3)
+            manifest['opponents'] = [0, 2]
+            root = Path(temporary)
+            for ordinal in range(1, 4):
+                for opponent in (0, 2):
+                    state = opening(opponent)
+                    row = capture(root, FakeBridge(state, f'{ordinal}-{opponent}'.encode()),
+                                  manifest, attempt(ordinal), opponent+1, state)
+                    self.assertEqual(row['split'], ('train', 'dev', 'holdout')[ordinal-1])
+                    self.assertEqual(row['opponent'], opponent)
+                    self.assertEqual(collection_complete(manifest), ordinal == 3 and opponent == 2)
 
     def test_invalid_configuration_never_runs_doctor(self):
         with patch('experiments.rl.collect.doctor') as preflight:

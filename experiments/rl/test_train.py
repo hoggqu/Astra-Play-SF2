@@ -8,7 +8,7 @@ from unittest.mock import Mock
 from astra_play_sf2.runner import sha256
 from .dataset import load_dataset
 from .env import EVAL_LEADS
-from .train import evaluate
+from .train import evaluate, summarize, selection_rank
 from .test_runtime import LuaRuntime
 from . import test_runtime
 
@@ -84,6 +84,28 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(result['win_rate'], 1)
         self.assertTrue(all(c.kwargs == {'deterministic': True} for c in model.predict.call_args_list))
         model.learn.assert_not_called()
+
+    def test_macro_selection_prioritizes_weakest_opponent(self):
+        rows = [{'opponent': 0, 'outcome': 'win', 'return': 1}]*9
+        rows += [{'opponent': 2, 'outcome': 'loss', 'return': -1}]
+        stats = summarize(rows)
+        self.assertEqual(stats['win_rate'], .9)
+        self.assertEqual(stats['macro_win_rate'], .5)
+        self.assertEqual(selection_rank(stats)[:2], (0, .5))
+        balanced = summarize([{'opponent': opponent, 'outcome': outcome, 'return': 0}
+                             for opponent in (0, 2) for outcome in ('win', 'loss')])
+        self.assertGreater(selection_rank(balanced), selection_rank(stats))
+
+    def test_predeclared_single_lead_reduces_dev_cost(self):
+        env = Mock()
+        env.checkpoints = [{}, {}]
+        env.episodes = [{'opponent': 0, 'outcome': 'win', 'return': 1}]
+        env.reset.return_value = ('observation', {})
+        env.step.return_value = ('next', 1, True, False, {})
+        model = Mock()
+        model.predict.return_value = (3, None)
+        self.assertEqual(evaluate(env, model, 'dev', leads=(2,))['episodes'], 2)
+        self.assertEqual([c.kwargs['options']['lead'] for c in env.reset.call_args_list], [2, 2])
 
     def test_baseline_never_uses_model_predictions(self):
         env = Mock()

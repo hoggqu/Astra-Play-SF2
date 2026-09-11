@@ -74,6 +74,11 @@ class MameEnv(gym.Env):
             signal.signal(signal.SIGTERM, terminate_worker)
         self.difficulty = difficulty
         self.checkpoints = list(checkpoints or [])
+        self.checkpoint_groups = {}
+        for i, sample in enumerate(self.checkpoints):
+            if sample['opponent'] not in (0,1,2,3,5,6,7,8,9,10,11):
+                raise ValueError('Invalid checkpoint opponent')
+            self.checkpoint_groups.setdefault(sample['opponent'], []).append(i)
         if not 3 <= difficulty <= 7:
             raise ValueError('Difficulty must be 3..7')
         preflight = doctor(config)
@@ -110,10 +115,7 @@ class MameEnv(gym.Env):
             # Detach only this training process's no-load session listeners.
             bridge.send('astra_load_sub:unsubscribe();astra_save_sub:unsubscribe();astra_reset_sub:unsubscribe();observe()')
             if self.checkpoints:
-                opponents = {sample['opponent'] for sample in self.checkpoints}
-                if len(opponents) != 1:
-                    raise ValueError('One opponent per experiment required')
-                opponent = opponents.pop()
+                opponent = self.checkpoints[0]['opponent']
                 checkpoint = paths[0]
             else:
                 bridge.send("speed('fast');wait_coin_ready(9000)")
@@ -132,11 +134,12 @@ class MameEnv(gym.Env):
             self.manifest = {'schema': 'astra.rl-pilot.v1', 'training_only': True,
                              'difficulty': difficulty, 'opponent': opponent, 'sound': 'none', 'show_window': show_window,
                              'checkpoint_sha256': sha256(checkpoint), 'runtime_sha256': runtime,
-                             'checkpoints': [{'id': sample.get('id', str(i)), 'sha256': sample['sha256']} for i, sample in enumerate(self.checkpoints)],
+                             'opponents': sorted(self.checkpoint_groups) if self.checkpoints else [opponent],
+                             'checkpoints': [{'id': sample.get('id', str(i)), 'sha256': sample['sha256'], 'opponent': sample['opponent']} for i, sample in enumerate(self.checkpoints)],
                              'experiment_sources': {p.name: sha256(p) for p in source.iterdir() if p.suffix in ('.py', '.lua')},
                              'actions': ACTION_NAMES, 'decision_frames': 12, 'observation_history': 4,
                              'train_leads': TRAIN_LEADS, 'eval_leads': EVAL_LEADS,
-                             'sampling': 'saved-state pool from natural openings' if self.checkpoints else 'one fresh native opening; saved-state resets plus lead jitter, not independent starts',
+                             'sampling': 'uniform opponent, then uniform saved-state within opponent' if self.checkpoints else 'one fresh native opening; saved-state resets plus lead jitter, not independent starts',
                              'versions': {name: version(name) for name in ('stable-baselines3', 'torch', 'gymnasium', 'numpy')}}
             (self.run/'manifest.json').write_text(json.dumps(self.manifest, indent=2)+'\n', encoding='utf-8')
             bridge.send("assert(loadfile('training/runtime/rl.lua'))();observe()", snapshot=False)
@@ -188,7 +191,13 @@ class MameEnv(gym.Env):
         lead = options.get('lead', int(self.np_random.choice(TRAIN_LEADS)))
         if type(lead) is not int or not 0 <= lead <= 12:
             raise ValueError('Lead must be an integer in 0..12')
-        index = options.get('checkpoint', int(self.np_random.integers(max(1, len(self.checkpoints)))))
+        if 'checkpoint' in options:
+            index = options['checkpoint']
+        elif self.checkpoints:
+            opponent = int(self.np_random.choice(sorted(self.checkpoint_groups)))
+            index = int(self.np_random.choice(self.checkpoint_groups[opponent]))
+        else:
+            index = 0
         if type(index) is not int or not 0 <= index < max(1, len(self.checkpoints)):
             raise ValueError('Invalid checkpoint index')
         self.record_partial('reset_before_round_end')
@@ -197,8 +206,10 @@ class MameEnv(gym.Env):
         if not result.get('reset_confirmed'):
             raise RuntimeError('Missing native post-load confirmation')
         state = result['state']
-        if state['p1']['char'] != 4 or state['p2']['char'] != self.manifest['opponent']:
+        opponent = self.checkpoints[index]['opponent'] if self.checkpoints else self.manifest['opponent']
+        if state['p1']['char'] != 4 or state['p2']['char'] != opponent:
             raise RuntimeError('Restored actor mismatch')
+        self.episode_opponent = opponent
         self.lead = lead
         self.episode_phase = self.phase
         self.previous = state
@@ -231,7 +242,7 @@ class MameEnv(gym.Env):
         info = {'training_only': True, 'outcome': outcome, 'frames': result['frames']}
         if done:
             row = {'phase': self.episode_phase, 'baseline': self.baseline, 'lead': self.lead,
-                   'checkpoint': self.checkpoint_index, 'episode': result['episode'], 'opponent': self.manifest['opponent'],
+                   'checkpoint': self.checkpoint_index, 'episode': result['episode'], 'opponent': self.episode_opponent,
                    'outcome': outcome, 'return': self.episode_return, 'steps': self.episode_steps,
                    'frames': result['frames'], 'wall_seconds': time.monotonic()-self.episode_started,
                    'final_state': state, 'native_round': result.get('native_round')}
