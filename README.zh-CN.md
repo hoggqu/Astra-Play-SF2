@@ -4,6 +4,9 @@
 
 *AI 生成的项目主题插画。*
 
+**0.1.3 Windows 修复：** 对局进度与终态文件分开发布，解决轮询读取和
+状态文件替换相撞时的 `Permission denied` 问题。[说明](docs/windows-status-io.md)
+
 **0.1.1 难度修复：** 旧启动方式可能出现 DIP 显示最高难度、游戏内部仍为 Normal。
 现在改为启动前配置，并检查游戏内部 RAM。历史跨难度结论需要复核，详见
 [问题诊断与证据规则](docs/difficulty-fix.md)。

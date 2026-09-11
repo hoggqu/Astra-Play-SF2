@@ -100,3 +100,17 @@ hashes must agree across children except the per-level `settings.lua`.
 There is no in-session difficulty change. The adapter passively checks internal
 difficulty every Core tick alongside DIP, speed and lifecycle checks. See the
 [difficulty correction](difficulty-fix.md) for the diagnosis and legacy evidence limits.
+
+## Status file publication (0.1.3)
+
+During a match, Lua appends progress to `PREFIX-progress.jsonl`. A progress
+reader must tolerate an incomplete last line. Python polls only
+`PREFIX-status.json`, which remains absent until the match has finished and its
+full log and screenshot have been written. Lua closes a temporary JSON file and
+renames it to that fresh terminal name exactly once. Later status queries never
+replace the published file.
+
+This avoids deleting a status file while Python has it open on Windows. The
+previous replacement fallback could raise `Permission denied` during a match.
+Both files are included in the local evidence seal; the existing terminal/raw
+summary comparison still applies. See [Windows status I/O](windows-status-io.md).

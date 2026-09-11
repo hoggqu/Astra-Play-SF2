@@ -9,6 +9,23 @@ permissions:
   contents: read
 
 jobs:
+  windows-lua-status-io:
+    name: Windows / real Lua status file concurrency
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Build wheel
+        run: python -m pip wheel --no-deps --wheel-dir dist .
+      - name: Install built wheel and test-only Lua runtime
+        run: python -c "from pathlib import Path; import subprocess, sys; wheels=list(Path('dist').glob('astra_play_sf2-*.whl')); assert len(wheels)==1, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', str(wheels[0]), 'lupa'])"
+      - name: Reproduce old lock failure and verify new Lua publication
+        run: python tests/windows_status_io.py
   unit-tests:
     name: ${{ matrix.os }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}

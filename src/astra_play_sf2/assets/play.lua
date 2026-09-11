@@ -6,6 +6,7 @@ if train_busy and train_busy() then error('Cannot reload modules during a traini
 -- The only normal pause is AFTER the final mature match settlement.
 if play_busy and play_busy() then error('Cannot reload play controller during a match') end
 local Core=assert(loadfile('training/runtime/play_core.lua'))()
+local StatusIO=assert(loadfile('training/runtime/status_io.lua'))()
 local Recorder=(function()
 -- Pure all-frame observer. No MAME, memory, input, file, time or policy APIs.
 local Recorder={};Recorder.__index=Recorder
@@ -110,7 +111,16 @@ local function view(r)
   evidence_basis='Live current-state observations and native lifecycle audit; no per-round visual-review claim'}
 end
 local function persist(r)
- write(r.prefix..'-status.json',view(r))
+ if r.published then return end
+ local body=json(view(r))..'\n'
+ if r.status=='complete' or r.status=='invalid' then
+  -- Python polls only this name. It does not exist until the final closed
+  -- JSON is renamed into place, and it is never replaced afterwards.
+  StatusIO.publish(r.prefix..'-status.json',body)
+  r.published=true
+ else
+  StatusIO.append(r.prefix..'-progress.jsonl',body)
+ end
 end
 local function event(r,e)
  e.frame=r.core.frame;e.emulated_seconds=m.time:as_double()
@@ -189,7 +199,7 @@ local function start_match(prefix,opponent,options)
  assert(m.system.name=='sf2','Expected sf2 World 910522')
  astra_difficulty.check(7-astra_difficulty_bits)
  assert(type(prefix)=='string' and prefix:match('^training/[%w_/%-]+$'),'Use a fresh path under training/')
- for _,suffix in ipairs({'-status.json','.json','-policy.lua','-status.json.tmp','.json.tmp'}) do
+ for _,suffix in ipairs({'-status.json','-progress.jsonl','.json','-policy.lua','-status.json.tmp','.json.tmp'}) do
   local f=io.open(prefix..suffix,'r');if f then f:close();error('Play prefix already exists') end
  end
  assert(modes[opponent],'Unsupported opponent')
@@ -209,7 +219,7 @@ local function start_match(prefix,opponent,options)
  end
  r.core=Core.new({mode=modes[opponent],opponent=opponent,choose=traced_policy,lead=opponent==8 and 2 or 0,timeout_guard=timeout_guards[opponent]},opening)
  local ok,err=pcall(function()
-  for _,path in ipairs({'training/runtime/fighter.lua','training/runtime/play_core.lua','training/runtime/play.lua','training/runtime/difficulty.lua','training/runtime/settings.lua'}) do
+  for _,path in ipairs({'training/runtime/fighter.lua','training/runtime/play_core.lua','training/runtime/play.lua','training/runtime/status_io.lua','training/runtime/difficulty.lua','training/runtime/settings.lua'}) do
    r.sources[path]=readfile(path)
   end
   local policy_file=assert(io.open(prefix..'-policy.lua','wb'))

@@ -6,6 +6,10 @@
 
 *AI-generated project illustration.*
 
+**0.1.3 Windows fix:** append-only progress and one-time terminal publication
+remove the status-reader/replacement collision that could abort a match with
+`Permission denied`. See [status I/O](docs/windows-status-io.md).
+
 **Difficulty correction in 0.1.1:** the previous startup flow could leave SF2
 using Normal despite a different DIP readback. Difficulty is now configured
 before boot and verified in game RAM. Historical cross-difficulty claims need
