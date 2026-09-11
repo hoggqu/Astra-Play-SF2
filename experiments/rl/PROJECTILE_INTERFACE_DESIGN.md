@@ -1,6 +1,7 @@
-# 六个飞行道具标量：待批准的独立观察候选
+# 六个飞行道具标量：独立观察候选（仅离线验收）
 
-这是方案，尚未实现新模型接口、迁移权重或启动 PPO。目标是检验一项新增
+独立 368 维 builder 和零列迁移已实现并通过离线检查，尚未进行原生
+验收或启动 PPO；现行 344 维包保持不变。目标是检验一项新增
 信息能否改善跨对手稳定性；不能把缺少波位置宣称为现有网络的硬上限。
 最新完整 20 币对照中，旧观察 weighted 模型的 Ryu 小局为 22 胜 2 负，
 但整条路线仅 1/20 通关；其失利集中于 Zangief、Guile。uniform 为 0/20。
@@ -48,13 +49,14 @@ Dhalsim 的有限 train 样本，未使用 dev/holdout 选模。
 4. 对象 `+0x26` 的 u16 与 Ken/CPU 原生地址低字匹配；所属玩家 `+0x1D4`
    的 u16 必须又指向该对象槽低字。没有把整个 u32 强行转换成指针。
 
-拒绝的正 HP 对象按原因计数并保存原始诊断，不把它们混入有效对象，
+只读探针保留原始对象诊断；共享编码器返回拒绝总数和选中槽，
+目前没有逐原因计数或把这些计数加入模型。拒绝对象不混入有效对象，
 也不因此修改 RAM 或按对手改招。这些是**观察接口的操作定义**，不是
 “可造成伤害”的完整判定。
 
 双向关联通常只允许每方一个对象。仍明确多候选的确定性规则：按
-`(abs(object.x-Ken.x), abs(object.y-Ken.y), slot)` 升序取一个，保存多候选
-计数；不得依赖 Lua table 遍历顺序。第一项不是碰撞到达时间预测，没有
+`(abs(object.x-Ken.x), abs(object.y-Ken.y), slot)` 升序取一个；不得依赖 Lua table 遍历顺序。实际双向单指针过滤下
+每个 owner 最多一个不同槽，尚无多槽同时通过的实机证据。第一项不是碰撞到达时间预测，没有
 速度信息时不宣称它选的是最危险的一颗。
 
 ## 最小 builder 与迁移
@@ -106,3 +108,57 @@ Lua history、批采样载荷、连续策略标识和接口审计；动作身份
 即使观察更丰富，也可能损害无波角色、改变跨角色权重分配或增加过拟合。
 低虎波命中语义、type2 范围、未见过的槽/初始化状态、遮挡与碰撞边界仍是
 未解风险。当前不据此承诺通关率提升。
+
+
+## 已实现的离线入口
+
+仅从已有冻结的 **344 维、16 动作 round-chain 包**派生，创建全新目录：
+
+```sh
+python -m experiments.rl.projectile_builder --source PATH/TO/CHAIN_PACKAGE --output NEW_CODE_DIR
+python -m experiments.rl.projectile_migrate --model OLD_ACTIONS16.zip --output NEW_MODEL_DIR
+python -m unittest experiments.rl.test_projectiles6 -v
+```
+
+包名为 `astra_sf2_rl_projectiles6`；模型身份为
+`sf2_projectiles6_owner_reciprocal_v1`。独立 schema 为
+`astra.rl-projectiles6-build.v1` / `astra.rl-policy.projectiles6.v1` /
+`astra.rl-continuous.projectiles6.v1`。原 action interface 不变。
+Gym 92×4、Lua features、export、batch live policy、native 部署与逐 match
+身份检查同步扩展。两个 runtime 调用同一个 `projectile_features.lua`；
+模块也进入 staged hash 和 campaign source hash。
+
+builder 记录父 manifest、父文件 SHA 与派生文件 SHA；动作、原生 Core 和
+结算文件必须保持父包字节。训练 runtime 仅插入共享只读 snapshot 字段，
+奖励函数、采样、输入节拍不改。生产依赖仍由已安装 `astra_play_sf2` 提供，
+进入每次 runtime/campaign 的现有来源审计；本 builder 不安装 MAME 或 ROM。
+
+`projectile_acceptance` 可使用已有训练诊断和只读 probe JSON，无须启动 MAME：
+
+```sh
+python -m experiments.rl.projectile_acceptance \
+  --model OLD_ACTIONS16.zip --package NEW_CODE_DIR/astra_sf2_rl_projectiles6 \
+  --output NEW_CHECK_DIR --diagnostics TRAIN_CASE_1.json TRAIN_CASE_2.json \
+  --probes TRAIN_PROBE_1.json TRAIN_PROBE_2.json
+```
+
+输入必须声明 `training_only=true`，诊断历史按真实 reset 标志重建，文件 SHA
+写入证据。此工具不查找或打开 holdout。它保存迁移前后 logits/value 最大误差、
+逐样本 argmax 一致性、原 margin、Adam 来源、模型 SHA、原生 staged Lua 语法与
+身份检查。任何 argmax 改变（包括接近平局）都拒绝离线迁移验收。
+
+在实际 a06 父模型与 12 个既有 train-only 诊断上：
+
+- 4,446 个真实历史加 515 个随机/边界样本；batch 1/32/256 和保存重载全部
+  argmax 一致。Torch logits 最大差 `2.3842e-6`，value 最大差 `4.7684e-7`。
+- 195 个真实/随机/边界样本，Lua 旧新 actor/value 在这组样本上精确相等。
+  Torch/Lua logits 最大差 `3.2470e-6`，value `6.1248e-7`，logprob `5.0024e-6`；
+  使用原 PPO Lua/Torch gate 的 `2e-5` 绝对限，未放宽运行时检查。
+- 六个既有 probe 共 21,139 原生帧与独立字段 oracle 一致；2,774 个有效
+  owner-frame 包括 type 0/1/3/4，排除 type 2。这里没有新增游戏运行或胜率样本。
+- 首层权重与 Adam 的一阶/二阶矩（含可选 AMSGrad）按历史列映射；新列零，
+  后层和 step 保留。测试包含序列化重载。未通过训练更新来“修补”迁移误差。
+
+这些结果仅证明有限离线数值与接口检查。它们不证明同一 ROM 的所有波类型、
+原生读取时序等价、吞吐或胜率改善。启用前仍需独立原生观测/动作一致性验收，
+随后另立冻结来源和父模型一致的对照；当前容量试验继续使用 344 维，不混合变量。
