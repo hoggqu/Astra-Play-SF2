@@ -42,9 +42,17 @@
 本地路线数据和种子不同，不是远端采样方案的因果对照。
 另有[固定策略训练起点诊断](TRAIN_STATE_DIAGNOSTICS.md)，不混入上述正式成绩。
 
+继续训练后，远端加权 C3（`7259a059cc98de66`）为 1/20，失败于
+Guile 7、Ryu 5、Honda 4、Zangief 2、Chun-Li 1；本地 C2
+（`7dafa54c1cc66cd4`）为 0/20，失败于 Guile 8、Ryu 6、Honda 2、
+Bison 1、Chun-Li 1、Vega 1、Balrog 1。两批均完成全部 20 次、无无效尝试，
+原生时间与动作接口审计通过，目标仍未达成。
+
 后续增加一个[64 与 128 单元容量对照](WIDTH_AB_LOCAL.md)，保持相同父模型、
 数据、种子、动作和奖励；[迁移方法](WIDTH_MIGRATION.md)保留旧参数及优化器，
-不会把迁移检查当作通关证据。新的[有界流水线](RELIABILITY_PIPELINE.md)
+不会把迁移检查当作通关证据。该对照的 B 训练因 TIME 结算异常中断，
+因此尚无完整容量对照结果；后续恢复会单独标明协议与环境重启。
+新的[有界流水线](RELIABILITY_PIPELINE.md)
 让完整验证与下一代预训练重叠，模型与每批 20 次成绩仍各自独立。
 
 ## 验收方式

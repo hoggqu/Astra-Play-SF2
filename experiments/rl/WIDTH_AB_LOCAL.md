@@ -1,5 +1,22 @@
 # Local capacity A/B protocol
 
+## Execution status
+
+The first paired experiment was interrupted and cannot support a completed
+capacity comparison. A finished its 20 attempts with 0 clears. B stopped after
+113,664 completed decisions on an unrecognized native TIME-loss settlement;
+the last saved model contains 102,400 decisions, and the remaining 11,264
+completed decisions are not recoverable from that checkpoint. No B full-20
+evaluation started. The invalid run and its raw trace remain unchanged.
+
+A new settlement adapter has independently reproduced and recognized the
+native loss using the previous frame's HP, the awarded pip and stable locked
+HP. Any continuation from the saved B checkpoint uses a new frozen source,
+output directory and restarted environment RNG. It is a separate reliability
+experiment, not completion of the original matched-seed A/B trajectory.
+
+## Original predeclared design
+
 The local capacity comparison starts from one completed 64×64 actor/critic
 checkpoint. Arm A continues that model. Arm B starts from its function-preserving
 128×128 expansion, including the embedded old Adam state described in
