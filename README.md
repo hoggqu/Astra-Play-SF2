@@ -2,6 +2,10 @@
 
 [中文说明](README.zh-CN.md) · [Runtime architecture](docs/architecture.md)
 
+![GPT-Astra playing Street Fighter II as Ken at an arcade cabinet](docs/images/astra-plays-sf2.png)
+
+*AI-generated project illustration.*
+
 Play **Street Fighter II: The World Warrior (World 910522)** as Ken with a fixed Lua policy and a Python command-line runner. Gameplay runs locally in MAME; it needs no AI model, API key, or online service.
 
 The runner uses ordinary player-one controls and current game state. Each verification starts an isolated session, then uses natural game completion and coin insertion between attempts. It does not load states, continue a defeated game, reset between attempts, or pause inside a match to change its policy.
@@ -58,7 +62,31 @@ Use the run directory and attempt ID printed by the CLI. `approve` records the n
 
 ## Validation and history
 
-The original V4 policy completed five consecutive clears at each difficulty from Normal to Hardest on its original macOS setup. Across **55 attempts**, it cleared **45** and lost **10**: an observed 81.8% clearance rate, not a guarantee. The standalone runner is a separate port; historical results do not certify this release on another OS or emulator build. Details and the frozen source identity are in [validation history](docs/validation.md).
+This project began on **September 8, 2026**, with a simple request: find MAME for Mac, then play Street Fighter II as Ken. It grew from learning individual matchups into a reproducible, frozen policy:
+
+1. **Learn to play.** Observe positions, HP and actions; build frame-timed Lua inputs and record useful patterns in reusable Agent instructions.
+2. **Train the weak matchups.** Use opening save states for practice, record every round's result, and repeatedly improve difficult opponents such as Honda, Blanka, Vega, Sagat and Bison. Subagents helped analyze failures and improve the training tools.
+3. **Tighten verification.** Separate training from play: no state loads, continues, or pauses inside a whole opponent match. Replace reset-based testing with natural game completion and new coin insertion to encounter a wider range of openings.
+4. **Freeze and validate V4.** Test the same selected strategy from Normal (3) through Hardest (7), preserving failures. Each difficulty ultimately finished with **five consecutive natural-coin clears**. The final V4 campaign recorded **45 clears in 55 attempts (81.8%)**, with **1,114 round wins, 96 losses and 3 draws**. These counts describe that campaign, not every earlier training run or a guaranteed future win rate.
+5. **Make it reproducible.** Preserve the frozen fighter/core/selection files, then package the runner as a Git project with a standalone CLI, installation scripts, Agent handoff instructions and auditable reports. Gameplay now runs without an AI model.
+
+The standalone runner is a separate port; historical results do not certify another OS or emulator build. Details and frozen source identities are in [validation history](docs/validation.md).
+
+### Time and token usage
+
+The following is the **whole task's cumulative usage, including training, verification and CLI packaging**, through **September 11, 2026, 13:28:38 (UTC+8)**. It is not V4 training alone. Local per-response usage records were deduplicated; the scope includes the main Agent, six working subagents and four automatic approval-review instances, and excludes other independent tasks, including the illustration-generation task.
+
+| Metric | Recorded amount |
+|---|---:|
+| Elapsed time since the first request | 72 h 52 m 47 s |
+| Active task time, merging parallel work | 51 h 21 m 46 s |
+| Summed Agent work time, including parallel work | 79 h 20 m 50 s |
+| **Total tokens: input + output** | **1,345,709,004** |
+| Cached input tokens | 1,314,050,816 |
+| Non-cached input tokens | 27,393,080 |
+| Output tokens, including reasoning | 4,265,108 |
+
+Active time includes analysis, tool execution and waits within a task. Cached tokens were **97.96% of input**; non-cached input plus output totaled **31,658,188 tokens**. These are usage counts, not a cost estimate. The final Git/CLI packaging task took **28 m 58 s** and used **16,332,890 tokens** including subagents; those figures are already included above. Later accounting and README edits are outside this snapshot.
 
 The Python tooling is designed for macOS, Linux, and Windows. CI defines unit tests and wheel builds on all three systems with Python 3.10 and 3.12. CI does not run copyrighted game data or certify emulator gameplay. Actual platform smoke-test evidence must be reported separately.
 
