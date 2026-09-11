@@ -39,28 +39,44 @@ py -3 -m venv .local/rl-venv
 
 ### 普通难度全对手自动训练与通关实验
 
-现在支持一套权重混合训练全部 11 名对手，以及 Lua 中每 12 帧执行一次神经网络
-推理的[连续游玩](CONTINUOUS.md)。战斗不调用 AI Agent，也不在中途暂停向 Python
+现在支持一套权重混合训练全部 11 名对手，以及 Lua 中每 12 个原生帧执行一次神经网络
+推理的[连续游玩](CONTINUOUS.md)。新实验优先使用[原生时间版本](NATIVE_TIMING.md)，
+旧暂停 RPC 保留供历史复现。战斗不调用 AI Agent，也不在中途暂停向 Python
 请求动作。选择角色、奖励关和地图过场仍复用固定脚本；实际交战没有 V4 回退。
 
 ```sh
 python -m experiments.rl.collect --difficulty 3 --opponents all --samples 4 --output .local/rl-data/normal-all-001 --max-seconds 1200
-python -m experiments.rl.campaign --dataset .local/rl-data/normal-all-001/manifest.json --output .local/rl-runs/normal-campaign-001 --init-model .local/rl-runs/train-001/best-dev.zip --workers 8 --cycles 5 --steps-per-cycle 102400 --eval-every 102400 --seed 42
+python -m experiments.rl.native_campaign --dataset .local/rl-data/normal-all-001/manifest.json --output .local/rl-runs/normal-native-campaign-001 --init-model .local/rl-runs/train-001/best-dev.zip --workers 8 --cycles 10 --steps-per-cycle 102400 --block 64 --seed 101
 ```
 
 `--init-model` 可省略以随机初始化；示例模型路径需要替换为实际已有模型。
 每个对手独立按采集顺序拆分 2 train / 1 dev / 1 holdout。训练时先均匀选对手，
-再选该对手的训练存档。每批新增 102400 次决策，dev 每对手固定 lead 2，按
-最弱对手胜率、平均对手胜率、回报依次选模。开发迭代不打开 holdout。
+再选该对手的训练存档。每批新增 102400 次决策，继承批末模型和优化器，
+不因单次小样本开发评估回滚；开发迭代不打开 holdout。固定执行源码在每个
+阶段前后核验，新建无关实验文件不影响批次。
 
 每批结束固定模型、自然投币验证最多三次；成功完成 11 场对手比赛后自动停止，
-否则自动继续下一批，默认最多五批。所有败局与中断保留；控制异常立即停止。
+否则自动继续下一批，以上命令最多十批。所有败局与中断保留；控制异常立即停止。
 通关结果为独立的 `rl_gameplay_clear`，不混入冻结 V4 的认证或历史胜率。
 初步接口检查和计划见 [Normal 实验设计](PLAN_NORMAL.md)。仅一个开局的局部胜率
 不能替代完整路线的实测。初次 R1-only 数据仍不覆盖所有 R2/R3 条件。
 
 两个 campaign 可使用不同 seed 和独立输出目录并行运行；必须把两个进程组的
 资源合计计入主机预算。每个 campaign 都不需要 Agent 按小局下指令。
+
+只读统计可重复传入多个运行目录，输出每个模型的逐对手训练小局成绩、连续游玩
+小局成绩和整路线失败对手。运行中的尝试记为待定；Lua 与 Python 的同一小局不重复计数。
+
+```sh
+python -m experiments.rl.report_normal --campaign .local/rl-runs/normal-native-campaign-001 --output .local/rl-reports/normal-001
+```
+
+输出目录须为新目录，并位于输入运行目录之外。报告不启动模拟器、不控制训练，
+也不代替原始连续游玩审计。
+
+旧 `campaign` 保留为历史对照：逐决策 RPC、每对手一个 lead 的 dev 选模并
+继承 best-dev。它可能回滚优化进展，且暂停恢复的帧回调不严格等于推进的原生帧；
+不要把其计数与新的 native-time 训练混合。时序检查和历史失败见上述说明。
 
 ### 首轮 Blanka 多开局实验
 

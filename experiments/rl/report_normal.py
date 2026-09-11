@@ -1,0 +1,316 @@
+"""Read-only campaign results: preserve identities, losses, and incomplete evidence.
+
+Only the legacy and native Normal campaign schemas are supported. This derives
+statistics from existing evidence; it does not certify, replay, or control MAME.
+"""
+import argparse
+from collections import Counter
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path
+
+NAMES = {0: 'Ryu', 1: 'Honda', 2: 'Blanka', 3: 'Guile', 5: 'Chun-Li', 6: 'Zangief',
+         7: 'Dhalsim', 8: 'Bison', 9: 'Sagat', 10: 'Balrog', 11: 'Vega'}
+SCHEMAS = {'astra.rl-campaign.v1': 'legacy_rpc', 'astra.rl-native-campaign.v1': 'native_batch'}
+OUTCOMES = ('win', 'loss', 'draw')
+
+
+def read_object(path, issues, required=False):
+    try:
+        raw = path.read_bytes()
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError('Expected JSON object')
+        return data, hashlib.sha256(raw).hexdigest()
+    except (OSError, ValueError) as error:
+        if required or path.exists():
+            issues.append({'path': str(path), 'error': str(error)})
+        return {}, None
+
+
+def read_lines(path, issues):
+    if not path.is_file():
+        return []
+    rows = []
+    with path.open(encoding='utf-8') as stream:
+        for number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError('Expected JSON object')
+                rows.append(row)
+            except ValueError as error:
+                issues.append({'path': str(path), 'line': number, 'error': str(error),
+                               'classification': 'unparsed; possibly in-progress tail'})
+    return rows
+
+
+def rounds_table(rows):
+    table = {}
+    for row in rows:
+        opponent, outcome = row.get('opponent'), row.get('outcome')
+        if opponent not in NAMES or outcome not in OUTCOMES:
+            continue
+        entry = table.setdefault(str(opponent), {'name': NAMES[opponent], 'win': 0, 'loss': 0, 'draw': 0})
+        entry[outcome] += 1
+    for row in table.values():
+        row['rounds'] = sum(row[k] for k in OUTCOMES)
+        row['win_rate'] = row['win']/row['rounds']
+    return table
+
+
+def unique_episodes(rows, path, issues, python=True):
+    accepted, conflicted, duplicates = {}, set(), 0
+    for row in rows:
+        episode = row.get('episode')
+        if (type(episode) is not int or row.get('opponent') not in NAMES or
+                row.get('outcome') not in OUTCOMES or
+                (python and (row.get('phase') != 'train' or row.get('baseline') is not False))):
+            issues.append({'path': str(path), 'episode': episode, 'error': 'Unrecognized training episode; excluded'})
+            continue
+        if episode in accepted:
+            if accepted[episode] == row:
+                duplicates += 1
+            else:
+                conflicted.add(episode)
+                issues.append({'path': str(path), 'episode': episode, 'error': 'Conflicting duplicate episode; all copies excluded'})
+        else:
+            accepted[episode] = row
+    for episode in conflicted:
+        accepted.pop(episode, None)
+    return accepted, duplicates
+
+
+def training_summary(folder, issues):
+    result, digest = read_object(folder/'result.json', issues)
+    full, pending, partials, workers = [], [], [], []
+    duplicates = 0
+    for worker in sorted(folder.glob('worker-*')):
+        if not worker.is_dir():
+            continue
+        path = worker/'episodes.jsonl'
+        primary, repeat = unique_episodes(read_lines(path, issues), path, issues)
+        duplicates += repeat
+        native_path = worker/'training/rl-batch-episodes.jsonl'
+        native, native_repeat = unique_episodes(read_lines(native_path, issues), native_path, issues, python=False)
+        duplicates += native_repeat
+        unconfirmed = []
+        for episode, row in native.items():
+            copy = primary.get(episode)
+            if copy is not None:
+                keys = ('outcome', 'opponent', 'checkpoint', 'steps', 'frames')
+                if any(copy.get(key) != row.get(key) for key in keys):
+                    issues.append({'path': str(worker), 'episode': episode, 'error': 'Python/native episode mismatch; moved to pending'})
+                    primary.pop(episode)
+                    unconfirmed.append(row)
+            else:
+                unconfirmed.append(row)
+        worker_partials = read_lines(worker/'partial-episodes.jsonl', issues)
+        native_partials = read_lines(worker/'training/rl-batch-partials.jsonl', issues)
+        full.extend(primary.values())
+        pending.extend(unconfirmed)
+        partials.extend(worker_partials)
+        workers.append({'worker': worker.name, 'python_rounds': len(primary),
+                        'python_steps_in_completed_rounds': sum(row.get('steps', 0) for row in primary.values()),
+                        'native_unconfirmed_rounds': len(unconfirmed),
+                        'partial_records': len(worker_partials), 'native_error_partial_records': len(native_partials)})
+    return {'status': result.get('status', 'not_started'), 'result_sha256': digest,
+            'model_sha256': result.get('model_sha256'), 'init_model_sha256': result.get('init_model_sha256'),
+            'actual_steps_reported': result.get('actual_steps'), 'error': result.get('error'),
+            'python_completed_rounds': len(full), 'rounds': rounds_table(full),
+            'native_unconfirmed_rounds': len(pending), 'native_unconfirmed_by_opponent': rounds_table(pending),
+            'partial_records': len(partials), 'duplicate_lines_excluded': duplicates, 'workers': workers}
+
+
+def child_path(base, relative):
+    if not isinstance(relative, str):
+        raise ValueError('Expected relative evidence path')
+    path = (base/relative).resolve()
+    if not path.is_relative_to(base.resolve()):
+        raise ValueError('Evidence path escapes continuous run')
+    return path
+
+
+def continuous_summary(folder, native_required, issues):
+    result, digest = read_object(folder/'result.json', issues)
+    output = {'status': result.get('status', 'not_started'), 'result_sha256': digest,
+              'model_sha256': result.get('model_sha256'), 'error': result.get('error'),
+              'native_timing': result.get('native_timing', False), 'attempts': [],
+              'rounds': {}, 'unverified_observed_rounds': {}}
+    status = result.get('status')
+    timing_audit = result.get('native_timing_audit')
+    pending_run = status in ('initializing', 'running') or (
+        status == 'complete' and native_required and timing_audit is None)
+    # native_continuous writes its final audit after its underlying continuous
+    # runner first publishes complete. A snapshot in this short window is pending.
+    output['audit_state'] = 'pending' if pending_run else ('invalid' if status == 'invalid' else 'available')
+    valid_run = status == 'complete' and not pending_run
+    if native_required:
+        valid_run = valid_run and result.get('native_timing') is True and (timing_audit or {}).get('ok') is True
+    verified_rounds, other_rounds = [], []
+    for attempt in result.get('attempts', []):
+        reported = attempt.get('outcome', 'invalid')
+        valid = valid_run and attempt.get('audit', {}).get('ok') is True and reported in ('loss', 'rl_gameplay_clear')
+        matches, rows = [], []
+        for relative in attempt.get('matches', []):
+            try:
+                path = child_path(folder, relative)
+                match, match_hash = read_object(path, issues, required=not pending_run)
+            except ValueError as error:
+                issues.append({'path': str(folder), 'error': str(error)})
+                match, match_hash = {}, None
+            summary = match.get('summary', {})
+            opponent = summary.get('opponent')
+            match_valid = (summary.get('status') == 'complete' and summary.get('valid_continuous') is True and
+                           summary.get('model_sha256') == result.get('model_sha256') and opponent in NAMES and
+                           summary.get('result') in ('ken_win', 'cpu_win'))
+            if not match_valid:
+                valid = False
+            for row in match.get('rounds', []):
+                rows.append({'opponent': opponent, 'outcome': row.get('outcome')})
+            matches.append({'path': relative, 'sha256': match_hash, 'opponent': opponent,
+                            'name': NAMES.get(opponent, 'unknown'), 'result': summary.get('result'),
+                            'score': summary.get('score'), 'valid': match_valid})
+        native_wins = sum(match['valid'] and match['result'] == 'ken_win' for match in matches)
+        if reported == 'rl_gameplay_clear':
+            valid = valid and len(matches) == 11 and native_wins == 11 and len({m['opponent'] for m in matches}) == 11
+        elif reported == 'loss':
+            valid = valid and bool(matches) and matches[-1]['result'] == 'cpu_win' and all(m['result'] == 'ken_win' for m in matches[:-1])
+        outcome = 'pending' if pending_run else (reported if valid else 'invalid')
+        (verified_rounds if valid else other_rounds).extend(rows)
+        failed = next((m for m in reversed(matches) if m['result'] == 'cpu_win'), None)
+        output['attempts'].append({'id': attempt.get('id'), 'outcome': outcome, 'reported_outcome': reported,
+                                   'pending_reason': 'Run or native timing audit has not finalized' if pending_run else None,
+                                   'match_wins': native_wins, 'failed_opponent': failed['opponent'] if failed else None,
+                                   'failed_opponent_name': failed['name'] if failed else None, 'matches': matches})
+    output['rounds'] = rounds_table(verified_rounds)
+    output['unverified_observed_rounds'] = rounds_table(other_rounds)
+    output['attempt_counts'] = dict(Counter(a['outcome'] for a in output['attempts']))
+    return output
+
+
+def summarize_campaign(path):
+    path = Path(path).resolve()
+    issues = []
+    result, digest = read_object(path/'result.json', issues, required=True)
+    if result.get('schema') not in SCHEMAS:
+        raise ValueError(f'Unsupported/missing campaign schema: {path}')
+    report = {'path': str(path), 'name': path.name, 'schema': result['schema'], 'kind': SCHEMAS[result['schema']],
+              'result_sha256': digest, 'status': result.get('status'), 'error': result.get('error'),
+              'difficulty': result.get('difficulty'), 'seed': result.get('seed'),
+              'dataset_sha256': result.get('dataset_sha256'), 'initial_model_sha256': result.get('initial_model_sha256'),
+              'completed_training_steps_reported': result.get('completed_training_steps'),
+              'goal_achieved_reported': result.get('goal_achieved'), 'cycles': [], 'issues': issues}
+    ordinals = {row['ordinal']: row for row in result.get('cycles', [])}
+    folders = {p.name: p for p in path.glob('cycle-*') if p.is_dir()}
+    folders.update({f'cycle-{n:03d}': path/f'cycle-{n:03d}' for n in ordinals})
+    for name, folder in sorted(folders.items()):
+        try:
+            ordinal = int(name.removeprefix('cycle-'))
+        except ValueError:
+            issues.append({'path': str(folder), 'error': 'Unexpected cycle directory name'})
+            continue
+        cycle = ordinals.get(ordinal, {})
+        report['cycles'].append({'cycle': ordinal, 'status': cycle.get('status', 'unlisted'),
+                                 'model_sha256': cycle.get('model_sha256'), 'stage': cycle.get('stage'),
+                                 'training': training_summary(folder/'train', issues),
+                                 'continuous': continuous_summary(folder/'continuous', report['kind'] == 'native_batch', issues)})
+    def combine(tables):
+        combined = {}
+        for table in tables:
+            for opponent, values in table.items():
+                target = combined.setdefault(opponent, {'name': values['name'], 'win': 0, 'loss': 0, 'draw': 0})
+                for outcome in OUTCOMES:
+                    target[outcome] += values[outcome]
+        for values in combined.values():
+            values['rounds'] = sum(values[k] for k in OUTCOMES)
+            values['win_rate'] = values['win']/values['rounds']
+        return combined
+    attempts = [a for cycle in report['cycles'] for a in cycle['continuous']['attempts']]
+    report['aggregate'] = {
+        'training_rounds': combine(c['training']['rounds'] for c in report['cycles']),
+        'completed_stage_training_rounds': combine(c['training']['rounds'] for c in report['cycles'] if c['training']['status'] == 'complete'),
+        'unfinished_stage_training_rounds': combine(c['training']['rounds'] for c in report['cycles'] if c['training']['status'] != 'complete'),
+        'continuous_rounds': combine(c['continuous']['rounds'] for c in report['cycles']),
+        'native_unconfirmed_rounds': sum(c['training']['native_unconfirmed_rounds'] for c in report['cycles']),
+        'attempt_counts': dict(Counter(a['outcome'] for a in attempts)),
+        'failed_opponents': dict(Counter(a['failed_opponent_name'] for a in attempts
+                                         if a['outcome'] == 'loss' and a['failed_opponent_name'])),
+        'invalid_stages': [{'cycle': c['cycle'], 'stage': name}
+                           for c in report['cycles'] for name in ('training', 'continuous')
+                           if c[name]['status'] == 'invalid']}
+    return report
+
+
+def render_markdown(report):
+    lines = ['# Normal 训练与连续验证汇总', '',
+             '只读派生统计；不重新认证。训练小局、连续游玩小局与整路线尝试分开。运行中快照可能尚未完整。', '',
+             'Python 逐局记录为训练主计数；Lua 原生副本不重复计数，尚未确认的记录单列待核对。', '']
+    for run in report['campaigns']:
+        lines += [f"## {run['name']}", '', f"类型：{run['kind']}；状态：{run['status']}；难度：{run['difficulty']}；种子：{run['seed']}。",
+                  f"路径：`{run['path']}`", f"结果快照 SHA-256：`{run['result_sha256']}`", '']
+        totals = run['aggregate']
+        lines += [f"全路线结果：{totals['attempt_counts'].get('rl_gameplay_clear', 0)} 通关 / {totals['attempt_counts'].get('loss', 0)} 失败 / {totals['attempt_counts'].get('invalid', 0)} 无效 / {totals['attempt_counts'].get('pending', 0)} 待定；失败对手：{json.dumps(totals['failed_opponents'], ensure_ascii=False)}。", '']
+        if run.get('error'):
+            lines += [f"运行错误：{run['error']}", '']
+        for cycle in run['cycles']:
+            train, play = cycle['training'], cycle['continuous']
+            lines += [f"### Cycle {cycle['cycle']}（{cycle['status']}）", '',
+                      f"模型：`{cycle.get('model_sha256') or train.get('model_sha256') or '尚无最终模型'}`", '',
+                      f"训练：{train['status']}；主记录完整小局 {train['python_completed_rounds']}；Lua 待核对 {train['native_unconfirmed_rounds']}；未完成片段记录 {train['partial_records']}。", '',
+                      '| 对手 | 训练胜/负/平 | 连续验证小局胜/负/平 | 未通过审计的游玩观察胜/负/平 |',
+                      '|---|---:|---:|---:|']
+            tables = [train['rounds'], play['rounds'], play['unverified_observed_rounds']]
+            for opponent in sorted(set().union(*(set(table) for table in tables)), key=int):
+                counts = ['/'.join(str(table.get(opponent, {}).get(k, 0)) for k in OUTCOMES) for table in tables]
+                lines.append(f"| {NAMES[int(opponent)]} | {' | '.join(counts)} |")
+            lines += ['', '整路线尝试：', '', '| 尝试 | 结果 | 已赢对手数 | 失利对手 |', '|---|---|---:|---|']
+            if not play['attempts']:
+                lines.append(f"| — | {play['status']}；尚无尝试结果 | — | — |")
+            for attempt in play['attempts']:
+                outcome = {'rl_gameplay_clear': '通关', 'loss': '失败', 'invalid': '无效', 'pending': '待定（尚未终审）'}[attempt['outcome']]
+                lines.append(f"| {attempt['id']} | {outcome} | {attempt['match_wins']} | {attempt['failed_opponent_name'] or '—'} |")
+            if play.get('error'):
+                lines += ['', f"连续验证错误：{play['error']}"]
+            if train['native_unconfirmed_rounds']:
+                lines += ['', '待核对 Lua 原生小局（未加入训练成绩）：`'+json.dumps(train['native_unconfirmed_by_opponent'], ensure_ascii=False)+'`']
+            lines.append('')
+        lines += [f"数据问题/未完成尾行：{len(run['issues'])}（详见 JSON）。", '']
+    if report['duplicate_campaign_paths_ignored']:
+        lines += ['重复传入的同一路径已忽略：`'+', '.join(report['duplicate_campaign_paths_ignored'])+'`', '']
+    return '\n'.join(lines)
+
+
+def summarize(paths):
+    seen, reports, repeated = set(), [], []
+    for path in paths:
+        resolved = Path(path).resolve()
+        if resolved in seen:
+            repeated.append(str(resolved))
+            continue
+        seen.add(resolved)
+        reports.append(summarize_campaign(resolved))
+    return {'schema': 'astra.rl-normal-report.v1', 'generated_utc': datetime.now(timezone.utc).isoformat(),
+            'read_only_derived_statistics': True, 'campaigns': reports, 'duplicate_campaign_paths_ignored': repeated}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--campaign', type=Path, action='append', required=True, help='Repeat for each campaign directory')
+    parser.add_argument('--output', type=Path, required=True, help='Fresh report directory outside source campaigns')
+    args = parser.parse_args()
+    output = args.output.resolve()
+    if any(output.is_relative_to(path.resolve()) for path in args.campaign):
+        parser.error('Write derived report outside all input campaign directories')
+    report = summarize(args.campaign)
+    output.mkdir(parents=True, exist_ok=False)
+    (output/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+    (output/'report.md').write_text(render_markdown(report), encoding='utf-8')
+    print(json.dumps({'campaigns': len(report['campaigns']), 'output': str(output)}, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    main()
