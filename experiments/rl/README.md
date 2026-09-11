@@ -44,6 +44,13 @@ py -3 -m venv .local/rl-venv
 旧暂停 RPC 保留供历史复现。战斗不调用 AI Agent，也不在中途暂停向 Python
 请求动作。选择角色、奖励关和地图过场仍复用固定脚本；实际交战没有 V4 回退。
 
+原生结算采用[证据协议](SETTLEMENT.md)，包括自然进入下一小局才确认的特殊
+时间平局；训练奖励使用上一局的成熟状态，防止补血污染奖励。
+[16 动作候选](ACTIONS16.md)保留原动作并增加中升龙，由同一网络选择。
+它使用独立生成包、明确的模型迁移和接口审计，先通过原生一致性及短 PPO
+更新检查，再运行自动训练与自然投币验证。候选成绩与原 15 动作模型分开统计，
+目前仍以取得一次真正的普通难度通关为实验目标。
+
 ```sh
 python -m experiments.rl.collect --difficulty 3 --opponents all --samples 4 --output .local/rl-data/normal-all-001 --max-seconds 1200
 python -m experiments.rl.native_campaign --dataset .local/rl-data/normal-all-001/manifest.json --output .local/rl-runs/normal-native-campaign-001 --init-model .local/rl-runs/train-001/best-dev.zip --workers 8 --cycles 10 --steps-per-cycle 102400 --block 64 --verification-attempts 1 --seed 101
