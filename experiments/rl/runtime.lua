@@ -100,9 +100,12 @@ rl_rpc_subscription=emu.register_frame_done(function()
   assert(not (job or bot or advance or loadwatch or savewatch or play_busy()),'Foreign controller active')
   Speed.apply(m.video,'fast')
   if op=='reset' then
-   assert(arg<=12 and (flag==0 or flag==1),'Invalid reset parameters')
-   baseline=flag==1;core=nil;held='';loaded=false;pending.refresh=2+arg
-   release();m:load(assert(loadfile('training/runtime/rl_checkpoint.lua'))());emu.unpause()
+   assert(arg<=12,'Invalid reset parameters')
+   local checkpoints=assert(loadfile('training/runtime/rl_checkpoint.lua'))()
+   if type(checkpoints)=='string' then checkpoints={checkpoints} end
+   local path=assert(checkpoints[math.floor(flag/2)+1],'Invalid checkpoint index')
+   baseline=flag%2==1;core=nil;held='';loaded=false;pending.refresh=2+arg
+   release();m:load(path);emu.unpause()
   elseif op=='step' then
    assert(core and #core.rounds==0,'Reset before stepping a terminal episode')
    assert(arg<Actions.count and flag==0,'Invalid action')

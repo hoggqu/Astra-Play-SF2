@@ -4,6 +4,7 @@ from importlib.metadata import version
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import time
 
 import gymnasium as gym
@@ -42,7 +43,7 @@ def reward(before, after, outcome=None):
 class MameEnv(gym.Env):
     metadata = {'render_modes': []}
 
-    def __init__(self, config, run, difficulty=7, show_window=False):
+    def __init__(self, config, run, difficulty=7, show_window=False, checkpoints=None):
         super().__init__()
         self.run = Path(run).resolve()
         self.action_space = gym.spaces.Discrete(len(ACTION_NAMES))
@@ -59,6 +60,7 @@ class MameEnv(gym.Env):
         self.baseline = False
         self.episodes = []
         self.difficulty = difficulty
+        self.checkpoints = list(checkpoints or [])
         if not 3 <= difficulty <= 7:
             raise ValueError('Difficulty must be 3..7')
         preflight = doctor(config)
@@ -70,7 +72,18 @@ class MameEnv(gym.Env):
         source = Path(__file__).parent
         for original, name in [('runtime.lua', 'rl.lua'), ('actions.lua', 'rl_actions.lua')]:
             (self.run/'training/runtime'/name).write_bytes((source/original).read_bytes())
-        (self.run/'training/runtime/rl_checkpoint.lua').write_text('return '+json.dumps((self.run/'training/rl-start.sta').as_posix(), ensure_ascii=False)+'\n', encoding='utf-8')
+        paths = []
+        for index, sample in enumerate(self.checkpoints):
+            original = Path(sample['path'])
+            if sha256(original) != sample['sha256'] or sample['difficulty'] != difficulty:
+                raise ValueError('Checkpoint hash/difficulty mismatch')
+            target = self.run/f'training/rl-start-{index:03d}.sta'
+            shutil.copyfile(original, target)
+            paths.append(target)
+        if not paths:
+            paths = [self.run/'training/rl-start.sta']
+        expression = '{'+','.join(json.dumps(path.as_posix(), ensure_ascii=False) for path in paths)+'}'
+        (self.run/'training/runtime/rl_checkpoint.lua').write_text('return '+expression+'\n', encoding='utf-8')
         runtime.update({name: sha256(self.run/'training/runtime'/name) for name in ('rl.lua', 'rl_actions.lua', 'rl_checkpoint.lua')})
         self.log = (self.run/'mame.log').open('wb')
         try:
@@ -81,29 +94,36 @@ class MameEnv(gym.Env):
                                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
             bridge = Bridge(self.run, self.process, timeout=120)
             bridge.wait(lambda: read_json(self.run/'training/ready.json'), 60)
-            bridge.send("speed('fast');wait_coin_ready(9000)")
-            bridge.send("astra_entry.require_ready('coin');act({{3,'C'},{1,''}})")
-            bridge.send('wait_start_ready(9000)')
-            bridge.send("astra_entry.require_ready('start');act({{3,'S'},{120,''},{3,'D'},{12,''}})")
-            bridge.send("act({{6,'LP'},{120,''}})")
-            state = bridge.send('next_round(1200)')
-            opponent = state['p2']['character']
-            make_opening_guard(7-difficulty)[3](state, opponent, lambda _s, _o, n: bridge.send(f'next_round({n})'))
-            # This isolated process now becomes training-only. Keep formal
-            # lifecycle listeners untouched in the production startup path.
+            # Detach only this training process's no-load session listeners.
             bridge.send('astra_load_sub:unsubscribe();astra_save_sub:unsubscribe();astra_reset_sub:unsubscribe();observe()')
-            checkpoint = self.run/'training/rl-start.sta'
-            path_literal = json.dumps(checkpoint.as_posix(), ensure_ascii=False)
-            bridge.send(f'checkpoint({path_literal})')
-            if not checkpoint.is_file():
-                raise RuntimeError('Checkpoint was not saved')
+            if self.checkpoints:
+                opponents = {sample['opponent'] for sample in self.checkpoints}
+                if len(opponents) != 1:
+                    raise ValueError('One opponent per experiment required')
+                opponent = opponents.pop()
+                checkpoint = paths[0]
+            else:
+                bridge.send("speed('fast');wait_coin_ready(9000)")
+                bridge.send("astra_entry.require_ready('coin');act({{3,'C'},{1,''}})")
+                bridge.send('wait_start_ready(9000)')
+                bridge.send("astra_entry.require_ready('start');act({{3,'S'},{120,''},{3,'D'},{12,''}})")
+                bridge.send("act({{6,'LP'},{120,''}})")
+                state = bridge.send('next_round(1200)')
+                opponent = state['p2']['character']
+                make_opening_guard(7-difficulty)[3](state, opponent, lambda _s, _o, n: bridge.send(f'next_round({n})'))
+                checkpoint = self.run/'training/rl-start.sta'
+                path_literal = json.dumps(checkpoint.as_posix(), ensure_ascii=False)
+                bridge.send(f'checkpoint({path_literal})')
+                if not checkpoint.is_file():
+                    raise RuntimeError('Checkpoint was not saved')
             self.manifest = {'schema': 'astra.rl-pilot.v1', 'training_only': True,
                              'difficulty': difficulty, 'opponent': opponent, 'sound': 'none', 'show_window': show_window,
                              'checkpoint_sha256': sha256(checkpoint), 'runtime_sha256': runtime,
+                             'checkpoints': [{'id': sample.get('id', str(i)), 'sha256': sample['sha256']} for i, sample in enumerate(self.checkpoints)],
                              'experiment_sources': {p.name: sha256(p) for p in source.iterdir() if p.suffix in ('.py', '.lua')},
                              'actions': ACTION_NAMES, 'decision_frames': 12, 'observation_history': 4,
                              'train_leads': TRAIN_LEADS, 'eval_leads': EVAL_LEADS,
-                             'sampling': 'one fresh native opening; saved-state resets plus lead jitter, not independent starts',
+                             'sampling': 'saved-state pool from natural openings' if self.checkpoints else 'one fresh native opening; saved-state resets plus lead jitter, not independent starts',
                              'versions': {name: version(name) for name in ('stable-baselines3', 'torch', 'gymnasium', 'numpy')}}
             (self.run/'manifest.json').write_text(json.dumps(self.manifest, indent=2)+'\n', encoding='utf-8')
             bridge.send("assert(loadfile('training/runtime/rl.lua'))();observe()", snapshot=False)
@@ -155,8 +175,12 @@ class MameEnv(gym.Env):
         lead = options.get('lead', int(self.np_random.choice(TRAIN_LEADS)))
         if type(lead) is not int or not 0 <= lead <= 12:
             raise ValueError('Lead must be an integer in 0..12')
+        index = options.get('checkpoint', int(self.np_random.integers(max(1, len(self.checkpoints)))))
+        if type(index) is not int or not 0 <= index < max(1, len(self.checkpoints)):
+            raise ValueError('Invalid checkpoint index')
         self.record_partial('reset_before_round_end')
-        result = self.rpc('reset', lead, int(self.baseline))
+        result = self.rpc('reset', lead, int(self.baseline)+2*index)
+        self.checkpoint_index = index
         if not result.get('reset_confirmed'):
             raise RuntimeError('Missing native post-load confirmation')
         state = result['state']
@@ -194,7 +218,7 @@ class MameEnv(gym.Env):
         info = {'training_only': True, 'outcome': outcome, 'frames': result['frames']}
         if done:
             row = {'phase': self.episode_phase, 'baseline': self.baseline, 'lead': self.lead,
-                   'episode': result['episode'], 'opponent': self.manifest['opponent'],
+                   'checkpoint': self.checkpoint_index, 'episode': result['episode'], 'opponent': self.manifest['opponent'],
                    'outcome': outcome, 'return': self.episode_return, 'steps': self.episode_steps,
                    'frames': result['frames'], 'wall_seconds': time.monotonic()-self.episode_started,
                    'final_state': state, 'native_round': result.get('native_round')}
