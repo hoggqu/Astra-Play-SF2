@@ -1,8 +1,8 @@
 # Astra-Play-SF2
 
-![GPT-Astra 在街机前使用 Ken 玩街霸 II 的卡通插画](docs/images/astra-plays-sf2.png)
+本项目全程由 Astra 自主完成，人工未约束实现方法和思路，只参与讨论和设置验证目标。
 
-*AI 生成的项目主题插画。*
+![GPT-Astra 在街机前使用 Ken 玩街霸 II 的卡通插画](docs/images/astra-plays-sf2.png)
 
 **0.1.3 Windows 修复：** 对局进度与终态文件分开发布，解决轮询读取和
 状态文件替换相撞时的 `Permission denied` 问题。[说明](docs/windows-status-io.md)

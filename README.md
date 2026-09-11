@@ -1,10 +1,10 @@
 # Astra-Play-SF2
 
+This project was completed autonomously by Astra from start to finish. Human involvement was limited to discussion and setting verification goals, without constraining implementation methods or approaches.
+
 [中文说明](README.zh-CN.md) · [Runtime architecture](docs/architecture.md)
 
 ![GPT-Astra playing Street Fighter II as Ken at an arcade cabinet](docs/images/astra-plays-sf2.png)
-
-*AI-generated project illustration.*
 
 **0.1.3 Windows fix:** append-only progress and one-time terminal publication
 remove the status-reader/replacement collision that could abort a match with
