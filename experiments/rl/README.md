@@ -5,10 +5,36 @@
 首轮 4096 次决策的实机结果见[试跑记录](RESULTS.md)；扩大采样与两个种子的
 102400 次决策实验见[并行训练记录](SCALED_RESULTS.md)。评估小局不等于通关率。
 
+新增独立实验：[85 动作与可见执行反馈](FULL_INTERFACE.md)，提供 800 维观测、
+完整 PPO→Lua 连续游玩入口及[干净 checkout 构建方法](FULL_INTERFACE_BOOTSTRAP.md)。
+它保留旧冻结版本，未继承旧模型的通关率。
+
+后续独立版本见[结构化画面感知](SCREEN_PERCEPTION.md)：将双方可见姿态、动作历史
+和已显示的飞行道具接入共享 PPO，继续保留 85 动作及旧冻结模型。
+
+**当前新训练入口：**[自主训练脚本](AUTOTRAIN.md)，自动构建128×128共享策略的
+managed执行包，包含[批次输入时序修复](INPUT_TIMING.md)与[零血量延迟KO结算v10](SETTLEMENT_V10.md)，
+支持完整更新边界停止、报告和CPU/CUDA选择。也可单独运行
+`python -m experiments.rl.managed_builder --output NEW_DIRECTORY`构建，再接入
+[版本化编排器](VERSIONED_CAMPAIGN.md)。旧timing/v6/v7等包保留作历史对照，
+新实验不继承旧模型的通关成绩。
+
+## 自己运行当前版本
+
+使用[自主训练脚本](AUTOTRAIN.md)指定运行时长或训练轮数，自动保存模型并生成HTML报告；
+用[独立观看命令](WATCH.md)观察指定模型，观看结果不混入训练统计。
+CPU默认，4090可选CUDA，安装与实测见[CUDA说明](CUDA.md)。
+
+```sh
+python -m experiments.rl.autotrain --dataset DATASET/manifest.json --hours 2 --output RUN
+python -m experiments.rl.watch --campaign RUN --speed 2x
+```
+
 ## 安装与运行
 
 从本分支的源码根目录运行，先按项目安装文档配置 Python 3.10+、MAME 0.288
-和 `sf2` World 910522 ROM。实验复用 `astra-sf2 configure` 保存的配置。
+和 `sf2` World 910522 ROM。实验复用 `astra-sf2 configure` 保存的配置。下面 `experiments.rl.run`
+命令演示早期 pilot；新 128 训练安装同一组依赖后，请使用上面的当前入口。
 
 ```sh
 # macOS / Linux
@@ -40,8 +66,9 @@ py -3 -m venv .local/rl-venv
 ### 普通难度全对手自动训练与通关实验
 
 现在支持一套权重混合训练全部 11 名对手，以及 Lua 中每 12 个原生帧执行一次神经网络
-推理的[连续游玩](CONTINUOUS.md)。新的训练优先使用
-[round-chain 派生包](ROUND_CHAIN_DESIGN.md)，它已修正暂停恢复时的输入提前锁存。
+推理的[连续游玩](CONTINUOUS.md)。历史上的
+[round-chain 派生包](ROUND_CHAIN_DESIGN.md)修正了暂停恢复时输入提前锁存的问题；
+后续又发现同一模拟时间重复轮询造成的输入丢失，新训练应使用页首推荐的 timing 派生包。
 [原生时间说明](NATIVE_TIMING.md) 区分这次修正和早期有限样本的 parity；
 下面的 R1-only `native_campaign` 命令及旧暂停 RPC 保留作历史对照，
 它们没有获得新的 chain 时序认证。战斗不调用 AI Agent，也不在中途暂停向 Python
@@ -61,10 +88,15 @@ py -3 -m venv .local/rl-venv
 190 场原生记录经独立审查通过。模型、源码与结果已冻结，见[最终报告](NORMAL_GOAL_RESULT.md)。
 自动流程先完整验证候选，未达标才继续训练；全部失败保留，不拼接不同模型的成功次数。
 
+后续实验补齐[Ken 的完整输入动作](FULL_ACTIONS.md)、双方已经显示出来的晕眩状态，
+以及执行器观察到的实际起招反馈。执行反馈作为下一次决策的观测，保持原有奖励；
+不屏蔽连按、不自动等待硬直结束，也不替模型决定招式。新接口与上述冻结模型分开，
+输入、输出维度改变后需要重新训练，不能把旧模型的 10/20 成绩算作新接口成绩。
+
 后续对照包括只改变训练对手概率的[固定加权采样](WEIGHTED_SAMPLING.md)，
 以及固定权重的 [16 动作随机策略验证](STOCHASTIC16.md)。
 [飞行道具观测调查](PROJECTILE_OBSERVATION.md)记录了只读实机证据和字段限制，
-尚未加入当前模型输入。
+当时未加入该 16 动作模型输入；新的[结构化画面感知](SCREEN_PERCEPTION.md)已有独立的可见飞行道具观测。
 
 ```sh
 python -m experiments.rl.collect --difficulty 3 --opponents all --samples 4 --output .local/rl-data/normal-all-001 --max-seconds 1200
@@ -246,3 +278,7 @@ python -m unittest experiments.rl.test_rl experiments.rl.test_runtime experiment
 接口设计参考 [Gymnasium 自定义环境](https://gymnasium.farama.org/main/tutorials/gymnasium_basics/environment_creation/)、
 [Stable-Baselines3 自定义环境](https://stable-baselines3.readthedocs.io/en/v2.7.1/guide/custom_env.html)
 和 [MAME Lua API](https://docs.mamedev.org/luascript/ref-core.html)。
+
+当前 standalone `autotrain` 默认启用近期胜率驱动的对手采样：均匀保底、弱项倾斜、
+概率平滑与上限，状态跟随完整PPO检查点续训。`--opponent-sampling uniform`可运行均匀
+对照；详细规则、报告字段和边界见[AUTOTRAIN](AUTOTRAIN.md#自动增加弱项练习)。
