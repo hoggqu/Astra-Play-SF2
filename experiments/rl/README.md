@@ -14,7 +14,7 @@
 
 **当前新训练入口：**[自主训练脚本](AUTOTRAIN.md)，自动构建128×128共享策略的
 managed执行包，包含[批次输入时序修复](INPUT_TIMING.md)与[零生命胜者结算v12](SETTLEMENT_V12.md)，
-支持完整更新边界停止、报告和CPU/CUDA选择。也可单独运行
+支持完整更新边界停止、报告和CPU/CUDA/MPS选择。也可单独运行
 `python -m experiments.rl.managed_builder --output NEW_DIRECTORY`构建，再接入
 [版本化编排器](VERSIONED_CAMPAIGN.md)。旧timing/v6/v7等包保留作历史对照，
 新实验不继承旧模型的通关成绩。
@@ -284,3 +284,5 @@ python -m unittest experiments.rl.test_rl experiments.rl.test_runtime experiment
 当前 standalone `autotrain` 默认启用近期胜率驱动的对手采样：均匀保底、弱项倾斜、
 概率平滑与上限，状态跟随完整PPO检查点续训。`--opponent-sampling uniform`可运行均匀
 对照；详细规则、报告字段和边界见[AUTOTRAIN](AUTOTRAIN.md#自动增加弱项练习)。
+
+单机单组的两机并行实验见 [Sagat 采样权重 A/B](SAGAT_SAMPLING_AB.md)。

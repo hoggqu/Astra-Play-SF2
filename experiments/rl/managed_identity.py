@@ -7,12 +7,12 @@ import sys
 from .perception128_identity import ARCHITECTURE, INTERFACE, OBSERVATION_INTERFACE, digest, validate_architecture
 
 PACKAGE = 'astra_sf2_rl_managed'
-SCHEMA = 'astra.rl-managed-perception128.v9'
+SCHEMA = 'astra.rl-managed-perception128.v10'
 PROTOCOL = 'native-pip-ko-late-ko-time-and-confirmed-draw-v12'
 TIMING_PROTOCOL = 'restore-held-input-before-rpc-resume-v1'
 STOP_PROTOCOL = 'ppo-update-stop-file-v1'
-SAMPLING_PROTOCOL = 'recent_round_win_opponent_sampling_v1'
-INPUT_NAMES = ('managed_builder.py', 'managed_identity.py', 'managed_runtime.py', 'adaptive_sampling.py', 'rollout_control.py')
+SAMPLING_PROTOCOL = 'adaptive_reset_probability_multipliers_v2'
+INPUT_NAMES = ('managed_builder.py', 'managed_identity.py', 'managed_runtime.py', 'adaptive_sampling.py', 'weighted_sampling.py', 'rollout_control.py')
 
 
 def validate_parent(root):
@@ -39,6 +39,7 @@ def derive(captured, inputs):
     out['managed_identity.py'] = inputs['managed_identity.py']
     out['managed_runtime.py'] = inputs['managed_runtime.py']
     out['adaptive_sampling.py'] = inputs['adaptive_sampling.py']
+    out['weighted_sampling.py'] = inputs['weighted_sampling.py']
     out['rollout_control.py'] = inputs['rollout_control.py']
     for name in ('initialize.py', 'support.py', 'batch_train.py'):
         out[name] = out[name].replace(b'from .perception128_draw_identity import', b'from .managed_identity import')
@@ -90,6 +91,7 @@ def derive(captured, inputs):
     body=replace_once(body,b'from .managed_runtime import stop_request,',b'from .managed_runtime import positive_learning_rate, configure_learning_rate, stop_request,')
     body=replace_once(body,b"    parser.add_argument('--device',",b"    parser.add_argument('--learning-rate', type=positive_learning_rate, default=os.environ.get('ASTRA_RL_LEARNING_RATE') or None)\n    parser.add_argument('--device',")
     body=replace_once(body,b'            configure(model, args.rollout_steps, args.minibatch_size)',b"            configure(model, args.rollout_steps, args.minibatch_size)\n            result['learning_rate_override'] = configure_learning_rate(model, args.learning_rate)")
+    body=replace_once(body,b'from .adaptive_sampling import OpponentSampler',b'from .weighted_sampling import OpponentSampler')
     out['batch_train.py'] = body
     env = captured['batch_env.py']
     env = replace_once(env, b'    def reset_choice(self):', b"    def set_opponent_probabilities(self, values):\n        from .adaptive_sampling import probability_map\n        self.opponent_probabilities = probability_map(sorted(self.checkpoint_groups), values)\n\n    def reset_choice(self):")

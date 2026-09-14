@@ -161,3 +161,5 @@ macOS 和 Linux/WSL 的 `autotrain` 会对子进程设置 `SDL_VIDEODRIVER=dummy
 数据集都须提供 SHA256。输出 `comparison.json`、`training/report.html` 和
 `final-evaluation/result.json`，不从不同权重中挑选成功记录。中断时保留已保存模型，
 不会将未完成的预算标记为完成或继续最终评估。
+
+自适应概率倍率与 checkpoint 继承规则见 [Sagat 采样权重 A/B](SAGAT_SAMPLING_AB.md)。

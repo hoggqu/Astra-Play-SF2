@@ -117,6 +117,16 @@ under ignored `.local/`; experimental source belongs in `experiments/rl/`.
 
 ## Development
 
+### User's A/B experiment convention
+
+- An A/B test means two hosts running concurrently, one arm per host:
+  local machine runs A and remote machine runs B, unless explicitly assigned otherwise.
+  The purpose is faster comparison using both machines. Do not run both A and B
+  on each host or schedule a second swapped arm without an explicit user request.
+- Each host completes its assigned arm and that arm's planned evaluation, then stops.
+  Record hardware/runtime differences as limitations instead of silently doubling
+  the experiment to control for them.
+
 - Training knowledge is included as portable documentation: read
   [training method](docs/training-method.md), [training history](docs/training-history.md)
   and [matchup lessons](docs/matchup-lessons.md) when asked to understand or improve

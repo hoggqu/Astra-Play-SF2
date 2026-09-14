@@ -33,6 +33,7 @@ def parser():
     p.add_argument('--all-attempts', action='store_true', help='Complete every requested evaluation coin even after a clear')
     p.add_argument('--workers', type=positive_workers, default=8, help='Parallel MAME environments; any positive integer (default8)')
     p.add_argument('--device', choices=('cpu','cuda','mps','auto'), default='cpu', help='Torch update device; MAME/Lua sampling stays on CPU')
+    p.add_argument('--opponent-multipliers', help='JSON map of character ID to reset sampling factor; omitted inherits checkpoint, {} disables factors')
     p.add_argument('--opponent-sampling', choices=('adaptive','uniform'), default='adaptive', help='Adaptive weak-opponent practice (default); uniform for a baseline')
     p.add_argument('--attempts', type=int, choices=(1,2,3), default=3, help='Automatic natural coins after each training cycle')
     selection = p.add_mutually_exclusive_group()
@@ -53,6 +54,8 @@ def validate_args(args):
         raise ValueError('--rounds must be positive')
     if type(args.workers) is not int or args.workers < 1:
         raise ValueError('--workers must be a positive integer')
+    from .weighted_sampling import parse_multipliers
+    parse_multipliers(args.opponent_multipliers)
     validate_sizes(args.rollout_steps,args.minibatch_size,args.workers)
     for name, value in (('--steps-per-round',args.steps_per_round),('--checkpoint-every',args.checkpoint_every)):
         if value < 1:
@@ -63,8 +66,8 @@ def validate_args(args):
         raise ValueError('Output already exists; choose a new directory and use --resume to continue')
 
 
-def training_environment(device, opponent_sampling='adaptive', learning_rate=None):
-    environment = {'ASTRA_RL_LEARNING_RATE':str(learning_rate) if learning_rate is not None else '', 'ASTRA_RL_DEVICE':device, 'ASTRA_RL_OPPONENT_SAMPLING':opponent_sampling, 'OMP_NUM_THREADS':'1',
+def training_environment(device, opponent_sampling='adaptive', learning_rate=None, opponent_multipliers=None):
+    environment = {'ASTRA_RL_OPPONENT_MULTIPLIERS':opponent_multipliers if opponent_multipliers is not None else '', 'ASTRA_RL_LEARNING_RATE':str(learning_rate) if learning_rate is not None else '', 'ASTRA_RL_DEVICE':device, 'ASTRA_RL_OPPONENT_SAMPLING':opponent_sampling, 'OMP_NUM_THREADS':'1',
                    'MKL_NUM_THREADS':'1', 'OPENBLAS_NUM_THREADS':'1'}
     if sys.platform.startswith('linux') or sys.platform == 'darwin':
         # -video none disables rendering; SDL still needs a non-desktop backend.
@@ -105,9 +108,9 @@ def run(args):
               'config':str(config),'hours':args.hours,'rounds':args.rounds,'steps_per_round':steps,
               'steps_per_round_requested':args.steps_per_round,'checkpoint_every_requested':args.checkpoint_every,
               'checkpoint_every':checkpoint_every,'decisions_per_update':args.rollout_steps, 'rollout_steps':args.rollout_steps, 'minibatch_size':args.minibatch_size,
-              'learning_rate_requested':args.learning_rate,'all_attempts':args.all_attempts,'workers':args.workers,'opponent_sampling':args.opponent_sampling,'device_requested':args.device,'device_resolved':resolved_device,
+              'opponent_multipliers_requested':args.opponent_multipliers,'learning_rate_requested':args.learning_rate,'all_attempts':args.all_attempts,'workers':args.workers,'opponent_sampling':args.opponent_sampling,'device_requested':args.device,'device_resolved':resolved_device,
               'init_model':str(model) if model else None,'stop_on_clear':args.stop_on_clear,
-              'training_environment':training_environment(resolved_device, args.opponent_sampling, args.learning_rate),
+              'training_environment':training_environment(resolved_device, args.opponent_sampling, args.learning_rate, args.opponent_multipliers),
               'time_limit':'Soft wall-clock budget; setup excluded, completed PPO update and final evaluation may overrun',
               'training_round':'One training decision budget followed by up to attempts natural-coin evaluations'}
     def save():
@@ -128,7 +131,7 @@ def run(args):
             print(f'Rounded up to complete updates ({args.rollout_steps} decisions): cycle {args.steps_per_round} -> {steps}; checkpoint {args.checkpoint_every} -> {checkpoint_every}',flush=True)
         print(f'Opponent sampling: {args.opponent_sampling}; full checkpoint preserves recent matchup history.',flush=True)
         print('Ctrl+C requests a safe stop; current update/game finishes before exit.',flush=True)
-        environment = training_environment(resolved_device, args.opponent_sampling, args.learning_rate)
+        environment = training_environment(resolved_device, args.opponent_sampling, args.learning_rate, args.opponent_multipliers)
         previous_environment = {name:os.environ.get(name) for name in environment}
         os.environ.update(environment)
         prior_signals = {}

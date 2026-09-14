@@ -25,6 +25,7 @@ def parser():
     p.add_argument('--device', choices=('cpu','cuda','mps','auto'), default='cpu')
     p.add_argument('--steps-per-round', type=positive_workers, default=409600)
     p.add_argument('--final-attempts', type=positive_workers, default=20)
+    p.add_argument('--opponent-multipliers', help='Optional JSON factors for reset probabilities')
     p.add_argument('--config', type=Path)
     p.add_argument('--output', type=Path)
     return p
@@ -37,6 +38,7 @@ def training_args(args, output, checkpoint):
               '--device',args.device,'--rollout-steps','16384','--minibatch-size','256',
               '--opponent-sampling','adaptive','--seed','42','--attempts','3','--all-attempts',
               '--output',str(output/'training')]
+    if args.opponent_multipliers is not None: values += ['--opponent-multipliers',args.opponent_multipliers]
     if args.config: values += ['--config',str(args.config.resolve())]
     return autotrain.parser().parse_args(values)
 
@@ -53,6 +55,7 @@ def run(args):
     output.mkdir(parents=True, exist_ok=False)
     record = dict(schema='astra.rl-lr-comparison.v1',status='preparing',
                   initial_model_sha256=args.checkpoint_sha256,dataset_sha256=args.dataset_sha256,
+                  opponent_multipliers=args.opponent_multipliers,
                   learning_rate=args.learning_rate,rounds=args.rounds,workers=args.workers,
                   device_requested=args.device,steps_per_round=args.steps_per_round,
                   training_decisions=args.rounds*args.steps_per_round,rollout_steps=16384,minibatch_size=256,

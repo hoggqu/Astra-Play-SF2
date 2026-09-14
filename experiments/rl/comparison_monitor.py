@@ -60,11 +60,10 @@ def check(config):
             # Persist before launching the single completion analysis. A crash cannot
             # cause another AI call on every timer tick.
             state_file.write_text(json.dumps(state,ensure_ascii=False,indent=2))
-            prompt=('这是一次已结束或异常的 SF2 PPO 场景采样 A/B 实验。请仅根据附加JSON写中文结果分析，不调用工具，不执行任务，不启动训练。'
-                    '每台机器各跑A旧场景、B一半旧场景换为新的Ryu/Blanka/ChunLi开局；两台GPU分别MPS/CUDA，执行顺序相反。'
-                    '各组从同一完整模型开始，LR0.0001、12workers、16384/256、2轮各409600步。'
-                    '先分别在同一GPU内比较A/B，再看两台是否一致。20币是自然序列而非独立随机种子，固定场景是诊断不是正式通关。'
-                    '不要合并中间权重成绩，不要夸大单次实验因果性；遇到invalid如实报告。输出结果表、主要变化和是否值得长训。\n'
+            prompt=('请仅根据附加 JSON 写中文 SF2 PPO 实验结果分析，不调用工具，不执行任务，不启动训练。'
+                    '说明完成或异常情况，不能合并不同权重的中间成绩。自然投币是连续序列，并非独立随机种子。'
+                    '硬件差异和小样本限制必须保留，不夸大因果性。输出结果表、失败对手和下一步建议。\n'
+                    +config.get('analysis_context','实验设计以结果 JSON 中记录为准。')+'\n'
                     +json.dumps(state,ensure_ascii=False))
             command=config.get('analysis_command')
             if command:
