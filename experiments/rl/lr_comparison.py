@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -20,6 +21,8 @@ def parser():
     p.add_argument('--dataset', type=Path, required=True)
     p.add_argument('--dataset-sha256', required=True)
     p.add_argument('--learning-rate', type=positive_learning_rate, required=True)
+    p.add_argument('--lr-schedule', choices=('constant','cosine'), default='constant')
+    p.add_argument('--lr-end', type=positive_learning_rate)
     p.add_argument('--rounds', type=positive_workers, default=10)
     p.add_argument('--workers', type=positive_workers, default=12)
     p.add_argument('--device', choices=('cpu','cuda','mps','auto'), default='cpu')
@@ -38,6 +41,8 @@ def training_args(args, output, checkpoint):
               '--device',args.device,'--rollout-steps','16384','--minibatch-size','256',
               '--opponent-sampling','adaptive','--seed','42','--attempts','3','--all-attempts',
               '--output',str(output/'training')]
+    values += ['--lr-schedule',args.lr_schedule]
+    if args.lr_end is not None: values += ['--lr-end',str(args.lr_end)]
     if args.opponent_multipliers is not None: values += ['--opponent-multipliers',args.opponent_multipliers]
     if args.config: values += ['--config',str(args.config.resolve())]
     return autotrain.parser().parse_args(values)
@@ -56,7 +61,7 @@ def run(args):
     record = dict(schema='astra.rl-lr-comparison.v1',status='preparing',
                   initial_model_sha256=args.checkpoint_sha256,dataset_sha256=args.dataset_sha256,
                   opponent_multipliers=args.opponent_multipliers,
-                  learning_rate=args.learning_rate,rounds=args.rounds,workers=args.workers,
+                  lr_schedule=args.lr_schedule,lr_end=args.lr_end,learning_rate=args.learning_rate,rounds=args.rounds,workers=args.workers,
                   device_requested=args.device,steps_per_round=args.steps_per_round,
                   training_decisions=args.rounds*args.steps_per_round,rollout_steps=16384,minibatch_size=256,
                   seed=42,cycle_evaluation_attempts=3,final_evaluation_attempts=args.final_attempts,
@@ -77,7 +82,19 @@ def run(args):
             raise RuntimeError('Comparison did not complete the exact training budget')
         for cycle in cycles:
             trained=json.loads((training/'run'/f"cycle-{cycle['ordinal']:03d}"/'train/result.json').read_text())
-            if trained['effective_ppo']['learning_rate']!=args.learning_rate:
+            if args.lr_schedule == 'cosine':
+                from .learning_schedule import rate_at
+                state=trained['learning_schedule']
+                expected_plan=dict(kind='cosine',start=args.learning_rate,end=args.lr_end,total_steps=record['training_decisions'])
+                if state['plan']!=expected_plan or state['completed_steps']!=cycle['ordinal']*args.steps_per_round:
+                    raise RuntimeError('Cosine schedule progress or plan differs from comparison arm')
+                initial=(cycle['ordinal']-1)*args.steps_per_round
+                if trained['learning_schedule_initial']['completed_steps']!=initial:
+                    raise RuntimeError('Cosine progress restarted at cycle boundary')
+                for row in trained['iterations']:
+                    if not math.isclose(row['learning_rate'],rate_at(expected_plan,initial+row['steps']),rel_tol=1e-12):
+                        raise RuntimeError('Cosine update learning rate mismatch')
+            elif trained['effective_ppo']['learning_rate']!=args.learning_rate or any(row['learning_rate']!=args.learning_rate for row in trained['iterations']):
                 raise RuntimeError('Effective learning rate differs from comparison arm')
             if len(cycle['attempts'])!=3:raise RuntimeError('Missing full cycle evaluation')
         code=training/'code';manifest=json.loads((code/'build.json').read_text())

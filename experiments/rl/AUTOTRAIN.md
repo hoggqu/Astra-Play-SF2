@@ -163,3 +163,5 @@ macOS 和 Linux/WSL 的 `autotrain` 会对子进程设置 `SDL_VIDEODRIVER=dummy
 不会将未完成的预算标记为完成或继续最终评估。
 
 自适应概率倍率与 checkpoint 继承规则见 [Sagat 采样权重 A/B](SAGAT_SAMPLING_AB.md)。
+
+固定学习率与全局余弦衰减实验、参数和续训语义见 [COSINE_AB.md](COSINE_AB.md)。

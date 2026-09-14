@@ -30,6 +30,9 @@ def parser():
     p.add_argument('--minibatch-size', type=int, default=64, help='Samples per gradient step; must divide rollout-steps')
     from .managed_runtime import positive_learning_rate
     p.add_argument('--learning-rate', type=positive_learning_rate, help='Override saved PPO learning rate while preserving Adam; omitted inherits checkpoint')
+    p.add_argument('--lr-schedule', choices=('constant','cosine'), help='Omitted inherits checkpoint; explicit constant disables decay')
+    p.add_argument('--lr-end', type=positive_learning_rate, help='Cosine final learning rate')
+    p.add_argument('--lr-schedule-steps', type=positive_workers, help='Global cosine decision budget, across cycles; required for hours-only decay')
     p.add_argument('--all-attempts', action='store_true', help='Complete every requested evaluation coin even after a clear')
     p.add_argument('--workers', type=positive_workers, default=8, help='Parallel MAME environments; any positive integer (default8)')
     p.add_argument('--device', choices=('cpu','cuda','mps','auto'), default='cpu', help='Torch update device; MAME/Lua sampling stays on CPU')
@@ -56,6 +59,7 @@ def validate_args(args):
         raise ValueError('--workers must be a positive integer')
     from .weighted_sampling import parse_multipliers
     parse_multipliers(args.opponent_multipliers)
+    schedule_environment(args)
     validate_sizes(args.rollout_steps,args.minibatch_size,args.workers)
     for name, value in (('--steps-per-round',args.steps_per_round),('--checkpoint-every',args.checkpoint_every)):
         if value < 1:
@@ -73,6 +77,22 @@ def training_environment(device, opponent_sampling='adaptive', learning_rate=Non
         # -video none disables rendering; SDL still needs a non-desktop backend.
         environment['SDL_VIDEODRIVER'] = 'dummy'
     return environment
+
+
+def schedule_environment(args):
+    from .learning_schedule import validate_plan
+    mode = args.lr_schedule
+    if mode != 'cosine':
+        if args.lr_end is not None or args.lr_schedule_steps is not None:
+            raise ValueError('--lr-end/--lr-schedule-steps require --lr-schedule cosine')
+        return {'ASTRA_RL_LR_SCHEDULE': '{}' if mode == 'constant' else ''}
+    if args.learning_rate is None or args.lr_end is None:
+        raise ValueError('Cosine requires --learning-rate and --lr-end')
+    total = args.lr_schedule_steps
+    if total is None and args.rounds is not None:
+        total = effective_budgets(args)[0] * args.rounds
+    plan = validate_plan(dict(kind='cosine',start=args.learning_rate,end=args.lr_end,total_steps=total))
+    return {'ASTRA_RL_LR_SCHEDULE': json.dumps(plan,sort_keys=True)}
 
 
 def effective_budgets(args):
@@ -108,9 +128,9 @@ def run(args):
               'config':str(config),'hours':args.hours,'rounds':args.rounds,'steps_per_round':steps,
               'steps_per_round_requested':args.steps_per_round,'checkpoint_every_requested':args.checkpoint_every,
               'checkpoint_every':checkpoint_every,'decisions_per_update':args.rollout_steps, 'rollout_steps':args.rollout_steps, 'minibatch_size':args.minibatch_size,
-              'opponent_multipliers_requested':args.opponent_multipliers,'learning_rate_requested':args.learning_rate,'all_attempts':args.all_attempts,'workers':args.workers,'opponent_sampling':args.opponent_sampling,'device_requested':args.device,'device_resolved':resolved_device,
+              'opponent_multipliers_requested':args.opponent_multipliers,'lr_schedule_requested':schedule_environment(args),'learning_rate_requested':args.learning_rate,'all_attempts':args.all_attempts,'workers':args.workers,'opponent_sampling':args.opponent_sampling,'device_requested':args.device,'device_resolved':resolved_device,
               'init_model':str(model) if model else None,'stop_on_clear':args.stop_on_clear,
-              'training_environment':training_environment(resolved_device, args.opponent_sampling, args.learning_rate, args.opponent_multipliers),
+              'training_environment':dict(training_environment(resolved_device, args.opponent_sampling, args.learning_rate, args.opponent_multipliers), **schedule_environment(args)),
               'time_limit':'Soft wall-clock budget; setup excluded, completed PPO update and final evaluation may overrun',
               'training_round':'One training decision budget followed by up to attempts natural-coin evaluations'}
     def save():
@@ -132,6 +152,7 @@ def run(args):
         print(f'Opponent sampling: {args.opponent_sampling}; full checkpoint preserves recent matchup history.',flush=True)
         print('Ctrl+C requests a safe stop; current update/game finishes before exit.',flush=True)
         environment = training_environment(resolved_device, args.opponent_sampling, args.learning_rate, args.opponent_multipliers)
+        environment.update(schedule_environment(args))
         previous_environment = {name:os.environ.get(name) for name in environment}
         os.environ.update(environment)
         prior_signals = {}

@@ -23,10 +23,10 @@ def arm_arguments(settings, output):
     return lr_comparison.parser().parse_args(values)
 
 
-def run(settings_path, output):
+def run(settings_path, output, argument_factory=arm_arguments):
     settings = json.loads(Path(settings_path).read_text())
     output = Path(output).resolve()
-    args = arm_arguments(settings, output)
+    args = argument_factory(settings, output)
     if args.device not in ('mps', 'cuda'):
         raise ValueError('Comparison requires explicit MPS or CUDA')
     output.mkdir(parents=True, exist_ok=False)

@@ -286,3 +286,5 @@ python -m unittest experiments.rl.test_rl experiments.rl.test_runtime experiment
 对照；详细规则、报告字段和边界见[AUTOTRAIN](AUTOTRAIN.md#自动增加弱项练习)。
 
 单机单组的两机并行实验见 [Sagat 采样权重 A/B](SAGAT_SAMPLING_AB.md)。
+
+固定学习率与全局余弦衰减实验、参数和续训语义见 [COSINE_AB.md](COSINE_AB.md)。
