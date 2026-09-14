@@ -32,7 +32,7 @@ def build(source, output):
     manifest = dict(parent)
     manifest.update(schema=SCHEMA, package=PACKAGE, cooperative_stop_protocol=STOP_PROTOCOL,
                     opponent_sampling_protocol=SAMPLING_PROTOCOL, rollout_protocol='exact_global_rollout_per_worker_gae_v1',
-                    devices_supported=['cpu','cuda','auto'], status='candidate', native_validated=False,
+                    devices_supported=['cpu','cuda','mps','auto'], status='candidate', native_validated=False,
                     parent_build_sha256=digest((source/'build.json').read_bytes()),
                     derived_sha256={n:digest(b) for n,b in derived.items()}, frozen_files_sha256=frozen,
                     scope='Adaptive training-opponent sampling, custom workers, explicit Torch device and cooperative update-boundary stop; identical Lua, observation, reward and combat execution.')

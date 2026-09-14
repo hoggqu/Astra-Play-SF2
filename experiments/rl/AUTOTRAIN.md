@@ -91,8 +91,9 @@ python -m experiments.rl.autotrain --dataset DATASET/manifest.json --resume OLD_
 不断变化，训练胜率不能当作固定模型的通关率；不同权重的成功次数也不拼成一个模型
 的成绩。运行异常会停止并保留原因；可检查原始记录，选择最后完整检查点续训到新目录。
 
-当前新构建包含[零血量延迟 KO 结算 v10](SETTLEMENT_V10.md)。旧版若遇到
-`new round arrived before previous result was resolved`，先保留失败记录并确认具体原因；
+当前新构建包含[零生命胜者结算 v12](SETTLEMENT_V12.md)。旧版若遇到
+`new round arrived before previous result was resolved` 或 `Character changed without reset`，
+先保留失败记录并确认具体原因；
 若原始结果发布了 `recovery_checkpoint`，`--resume OLD_RUN` 会读取这份完整更新后的权重。
 省略 `--code` 可从当前仓库重新构建执行包；不要复用发生错误的旧冻结执行包。
 继续使用原来的大批次时，仍须显式填写 `--rollout-steps` 和 `--minibatch-size`。
@@ -145,3 +146,18 @@ macOS 和 Linux/WSL 的 `autotrain` 会对子进程设置 `SDL_VIDEODRIVER=dummy
 
 需要均匀对照时加 `--opponent-sampling uniform`，它仍统计并保存近期胜率，但均匀选对手。
 这只是一种训练机会分配方案，尚未证明能提高固定模型的通关率；比较应使用新的自然投币结果。
+
+
+## 学习率对照
+
+`--learning-rate 0.0001` 显式覆盖 checkpoint 中保存的 PPO 学习率及调度，
+同时保留策略、价值网络、Adam 动量和对手采样历史。不填写时继承 checkpoint 的值；
+随机初始化仍默认 0.0003。实际值写入每轮 `effective_ppo`、更新日志与 HTML 报告。
+`--all-attempts` 让每轮验证打满 `--attempts` 指定的次数，首次通关也不提前结束。
+
+独立入口 `python -m experiments.rl.lr_comparison --help` 用相同起点做固定预算对照：
+默认 10 轮，每轮 409600 次决策、12 workers、CPU、16384/256；每轮完整验证 3 次，
+结束后用最终权重完整验证 20 次。两组只传不同的 `--learning-rate`，checkpoint 与
+数据集都须提供 SHA256。输出 `comparison.json`、`training/report.html` 和
+`final-evaluation/result.json`，不从不同权重中挑选成功记录。中断时保留已保存模型，
+不会将未完成的预算标记为完成或继续最终评估。

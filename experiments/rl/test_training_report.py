@@ -33,11 +33,13 @@ class SummaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);c,w=self.fixture(root)
             p=c/'train/result.json';r=json.loads(p.read_text())
-            r.update(rollout_steps=12,minibatch_size=4,effective_ppo={'batch_size':4,'n_epochs':4})
+            r.update(rollout_steps=12,minibatch_size=4,effective_ppo={'batch_size':4,'n_epochs':4,'learning_rate':1e-4})
             p.write_text(json.dumps(r))
             got=summary.summarize(root)
-            self.assertEqual(got['cycles'][0]['parameters'],dict(workers=1,rollout_steps=12,minibatch_size=4,epochs=4,update_cycles=1))
+            self.assertEqual(got['cycles'][0]['parameters'],dict(workers=1,rollout_steps=12,minibatch_size=4,learning_rate=1e-4,epochs=4,update_cycles=1))
             self.assertIn('每次更新决策数',summary.render_html(got))
+            self.assertIn('Learning rate',summary.render_html(got))
+            self.assertIn('0.0001',summary.render_html(got))
 
     def test_native_terminal_score_only_no_trace_read(self):
         with tempfile.TemporaryDirectory() as d:

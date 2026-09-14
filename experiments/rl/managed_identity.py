@@ -7,8 +7,8 @@ import sys
 from .perception128_identity import ARCHITECTURE, INTERFACE, OBSERVATION_INTERFACE, digest, validate_architecture
 
 PACKAGE = 'astra_sf2_rl_managed'
-SCHEMA = 'astra.rl-managed-perception128.v6'
-PROTOCOL = 'native-pip-ko-late-ko-time-and-confirmed-draw-v11'
+SCHEMA = 'astra.rl-managed-perception128.v9'
+PROTOCOL = 'native-pip-ko-late-ko-time-and-confirmed-draw-v12'
 TIMING_PROTOCOL = 'restore-held-input-before-rpc-resume-v1'
 STOP_PROTOCOL = 'ppo-update-stop-file-v1'
 SAMPLING_PROTOCOL = 'recent_round_win_opponent_sampling_v1'
@@ -46,7 +46,7 @@ def derive(captured, inputs):
     changes = [
         (b"type=int, choices=range(1, 17), default=8", b"type=positive_workers, default=8"),
         (b'from .batch_env import BatchEnv, BatchBridge, ATTACH', b'from .batch_env import BatchEnv, BatchBridge, ATTACH\nfrom .managed_runtime import stop_request, select_device, positive_workers, PROTOCOL as STOP_PROTOCOL'),
-        (b"    parser.add_argument('--dataset', type=Path, required=True)", b"    parser.add_argument('--device', choices=('cpu','cuda','auto'), default=os.environ.get('ASTRA_RL_DEVICE','cpu'))\n    parser.add_argument('--dataset', type=Path, required=True)"),
+        (b"    parser.add_argument('--dataset', type=Path, required=True)", b"    parser.add_argument('--device', choices=('cpu','cuda','mps','auto'), default=os.environ.get('ASTRA_RL_DEVICE','cpu'))\n    parser.add_argument('--dataset', type=Path, required=True)"),
         (b'    is_parity = args.parity or args.native_parity', b'    device = select_device(args.device)\n    is_parity = args.parity or args.native_parity'),
         (b"    atomic_json(output/'result.json', result)\n    vector = None;started = time.monotonic()", b"    result.update(device_requested=args.device, device_resolved=device, cooperative_stop_protocol=STOP_PROTOCOL)\n    atomic_json(output/'result.json', result)\n    vector = None;started = time.monotonic()"),
         (b"    def stop(_signal, _frame):\n        raise KeyboardInterrupt('SIGTERM')\n    signal.signal(signal.SIGTERM, stop)", b"    signal_stop = {}\n    def stop(_signal, _frame):\n        signal_stop['reason'] = 'user_cancelled'\n    signal.signal(signal.SIGTERM, stop)\n    signal.signal(signal.SIGINT, stop)"),
@@ -87,6 +87,9 @@ def derive(captured, inputs):
     body=body[:start]+b"                sample_start = time.monotonic()\n                gathered = collect(vector, args.rollout_steps, args.block, payload, target//args.rollout_steps-1)\n"+body[end:]
     body=replace_once(body,b"    result.update(device_requested=args.device",b"    result.update(rollout_steps=args.rollout_steps, minibatch_size=args.minibatch_size, rollout_protocol=ROLLOUT_PROTOCOL)\n    result.update(device_requested=args.device")
     body=replace_once(body,b"                row['chain_metrics'] =",b"                row['worker_decisions'] = [len(c['transitions']) for c in gathered]\n                row['chain_metrics'] =")
+    body=replace_once(body,b'from .managed_runtime import stop_request,',b'from .managed_runtime import positive_learning_rate, configure_learning_rate, stop_request,')
+    body=replace_once(body,b"    parser.add_argument('--device',",b"    parser.add_argument('--learning-rate', type=positive_learning_rate, default=os.environ.get('ASTRA_RL_LEARNING_RATE') or None)\n    parser.add_argument('--device',")
+    body=replace_once(body,b'            configure(model, args.rollout_steps, args.minibatch_size)',b"            configure(model, args.rollout_steps, args.minibatch_size)\n            result['learning_rate_override'] = configure_learning_rate(model, args.learning_rate)")
     out['batch_train.py'] = body
     env = captured['batch_env.py']
     env = replace_once(env, b'    def reset_choice(self):', b"    def set_opponent_probabilities(self, values):\n        from .adaptive_sampling import probability_map\n        self.opponent_probabilities = probability_map(sorted(self.checkpoint_groups), values)\n\n    def reset_choice(self):")
@@ -101,7 +104,7 @@ def validate_build(manifest, package):
                 'action_interface':INTERFACE, 'observation_interface':OBSERVATION_INTERFACE,
                 'observations':4516, 'actions':85, 'decision_frames':12,
                 'settlement_protocol':PROTOCOL, 'input_timing_protocol':TIMING_PROTOCOL,
-                'cooperative_stop_protocol':STOP_PROTOCOL, 'devices_supported':['cpu','cuda','auto'],
+                'cooperative_stop_protocol':STOP_PROTOCOL, 'devices_supported':['cpu','cuda','mps','auto'],
                 'opponent_sampling_protocol':SAMPLING_PROTOCOL,
                 'rollout_protocol':'exact_global_rollout_per_worker_gae_v1'}
     if any(manifest.get(k) != v for k,v in expected.items()):

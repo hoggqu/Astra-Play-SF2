@@ -209,7 +209,7 @@ def recover_checkpoint(train_dir, workers, budget, dataset_sha256, init_model_sh
                 from_incomplete_stage=True,optimizer_load_validation_required=True)
 
 
-def evaluate_result(value, exit_code, model_hash, attempts, identity):
+def evaluate_result(value, exit_code, model_hash, attempts, identity, all_attempts=False):
     if value.get('status') != 'complete' or value.get('difficulty') != 3 or value.get('model_sha256') != model_hash:
         raise RuntimeError('Evaluation identity/status mismatch')
     for key in ('action_interface','observation_interface'):
@@ -220,12 +220,13 @@ def evaluate_result(value, exit_code, model_hash, attempts, identity):
         if value.get(key,{}).get('ok') is not True: raise RuntimeError('Missing successful '+key)
     rows = value.get('attempts',[])
     if not 1 <= len(rows) <= attempts: raise RuntimeError('Wrong natural-coin attempt count')
+    if all_attempts and len(rows)!=attempts:raise RuntimeError('Full evaluation stopped before requested attempt count')
     cleared = False
     for index,row in enumerate(rows):
         if row.get('audit',{}).get('ok') is not True or row.get('outcome') not in ('loss','rl_gameplay_clear'):
             raise RuntimeError('Invalid individual natural-coin attempt')
         if row['outcome'] == 'rl_gameplay_clear':
-            if row.get('match_wins') != 11 or len(row.get('matches',[])) != 11 or index != len(rows)-1:
+            if row.get('match_wins') != 11 or len(row.get('matches',[])) != 11 or (not all_attempts and index != len(rows)-1):
                 raise RuntimeError('Clear requires eleven audited matches and immediate stop')
             cleared = True
     if exit_code != (0 if cleared else 1) or (not cleared and len(rows) != attempts):
@@ -263,11 +264,12 @@ def matchup_totals(folder, attempts):
 def campaign(*, code, package, dataset, output, config, cycles=None, steps, workers,
              python=sys.executable, init_model=None, attempts=3, seed=42,
              timeout=86400, block=128, checkpoint_every=20480, first_cycle_steps=None, max_duration=None, stop_on_clear=True, evaluate_on_stop=False,
-             runner=run_child, clock=time.monotonic, rollout_steps=None, minibatch_size=64):
+             runner=run_child, clock=time.monotonic, rollout_steps=None, minibatch_size=64, all_attempts=False):
     if cycles is not None and (type(cycles) is not int or cycles<1):raise ValueError('cycles must be a positive integer')
     if max_duration is not None and (type(max_duration) not in (int,float) or not math.isfinite(max_duration) or max_duration<=0):
         raise ValueError('max-duration must be positive finite seconds')
     if cycles is None and max_duration is None:raise ValueError('Provide cycles or max-duration')
+    if type(all_attempts) is not bool:raise ValueError('all-attempts must be boolean')
     if type(stop_on_clear) is not bool or type(evaluate_on_stop) is not bool:raise ValueError('stop-on-clear and evaluate-on-stop must be boolean')
     if any(type(v) is not int or v<1 for v in (steps,timeout)) or type(workers) is not int or workers < 1:
         raise ValueError('Positive budgets and positive integer workers required')
@@ -308,7 +310,7 @@ def campaign(*, code, package, dataset, output, config, cycles=None, steps, work
         'steps_per_cycle':steps,'first_cycle_steps':first_cycle_steps,
         'first_cycle_steps_effective':first_cycle_steps if first_cycle_steps is not None else steps,
         'workers':workers,'rollout_steps':rollout_steps,'minibatch_size':minibatch_size if rollout_steps else None,'decisions_per_update':quantum,'block':block,'checkpoint_every':checkpoint_every,
-        'attempts_per_cycle':attempts,
+        'attempts_per_cycle':attempts,'all_attempts':all_attempts,
         'holdout_opened':False,'frozen_v4_certification':False,
         'selection':'latest completed full PPO ZIP and Adam; no eval-best rollback',
         'initial_model_sha256':model_hash,'cycles':[],'evaluation_matchups':{}}
@@ -424,9 +426,11 @@ def campaign(*, code, package, dataset, output, config, cycles=None, steps, work
                     finish_stop(reason);break
             evaluation=folder/'natural-coins'
             status=stage('native_continuous',['--model',model,'--output',evaluation,'--difficulty',3,
-                '--attempts',attempts,'--speed','fast'],folder)
+                '--attempts',attempts,'--speed','fast']+(['--all-attempts'] if all_attempts else []),folder)
             evaluated=read_complete(evaluation/'result.json')
-            clear=evaluate_result(evaluated,status,model_hash,attempts,identity)
+            clear=evaluate_result(evaluated,status,model_hash,attempts,identity,all_attempts=all_attempts)
+            if all_attempts and len(evaluated['attempts'])!=attempts:
+                raise RuntimeError('Full evaluation stopped before requested attempt count')
             totals=matchup_totals(evaluation,evaluated['attempts'])
             for opponent,counts in totals.items():
                 target=record['evaluation_matchups'].setdefault(opponent,{k:0 for k in counts})

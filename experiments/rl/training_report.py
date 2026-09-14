@@ -181,7 +181,7 @@ def summarize(campaign):
                        stop_reason=result.get('stop_reason'),model_path=str(cycle/'train/ppo-batch.zip'),
                        seed=result.get('seed'), dataset_sha256=result.get('dataset_sha256'),
                        result_sha256=digest, ppo={})
-            row['parameters'] = dict(workers=result.get('workers'), rollout_steps=result.get('rollout_steps'), minibatch_size=result.get('minibatch_size',result.get('effective_ppo',{}).get('batch_size')), epochs=result.get('effective_ppo',{}).get('n_epochs'), update_cycles=len(result.get('iterations',[])))
+            row['parameters'] = dict(learning_rate=result.get('effective_ppo',{}).get('learning_rate'), workers=result.get('workers'), rollout_steps=result.get('rollout_steps'), minibatch_size=result.get('minibatch_size',result.get('effective_ppo',{}).get('batch_size')), epochs=result.get('effective_ppo',{}).get('n_epochs'), update_cycles=len(result.get('iterations',[])))
             row['training'] = training(cycle/'train', result)
             if 'opponent_sampling' in result:
                 row['opponent_sampling'] = sampling_summary(result['opponent_sampling'],row['steps'])
@@ -279,7 +279,7 @@ def render_html(summary):
         ev=c.get('evaluation',{});tr=c['training']['per_opponent']
         chunks.append('<section><h2>'+esc(c['cycle'])+'</h2><p class="muted">模型 <code>'+esc(c['model_sha256'])+'</code></p>')
         params=c.get('parameters',{})
-        chunks.append(table(['Workers','每次更新决策数','Mini-batch','Epochs','完成采样更新次数'],[[params.get(k) for k in ('workers','rollout_steps','minibatch_size','epochs','update_cycles')]]))
+        chunks.append(table(['Workers','每次更新决策数','Mini-batch','Learning rate','Epochs','完成采样更新次数'],[[params.get(k) for k in ('workers','rollout_steps','minibatch_size','learning_rate','epochs','update_cycles')]]))
         if ev.get('counted'):
             coin_rows=[[a['id'],'通关' if a['outcome']=='rl_gameplay_clear' else '败局',a['match_wins'],a.get('failure_name') or '—'] for a in ev['attempts']]
             chunks.append(table(['自然投币','结果','击败对手数','失败对手'],coin_rows))

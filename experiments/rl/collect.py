@@ -169,7 +169,9 @@ def collect_attempt(run, bridge, manifest, attempt, save):
             state = advance(1800 if number == 7 else 1200)
 
 
-def collect(config, output, samples=6, max_attempts=12, max_matches=132, max_seconds=900, difficulty=7, opponents=None):
+def collect(config, output, samples=6, max_attempts=12, max_matches=132, max_seconds=900, difficulty=7, opponents=None, warmup_frames=0):
+    if type(warmup_frames) is not int or not 0 <= warmup_frames <= 36000:
+        raise ValueError('Warmup must be 0..36000 native frames')
     if type(samples) is not int or samples < 3:
         raise ValueError('At least three samples are needed for train/dev/holdout')
     if any(type(n) is not int or n < 1 for n in (max_attempts, max_matches, max_seconds)):
@@ -193,7 +195,7 @@ def collect(config, output, samples=6, max_attempts=12, max_matches=132, max_sec
                 'preflight': preflight, 'platform': platform.platform(), 'python': platform.python_version(),
                 'sampling': 'One boot; natural coins after native game over. At most one R1 per requested opponent per attempt. No loads, resets or RAM writes. Saving may advance a frame. Different state hashes do not prove independence.',
                 'split_method': 'Within each opponent, collection order: first N-2 train, penultimate dev, last holdout; no outcome-based selection',
-                'sound': 'none', 'video': 'none',
+                'sound': 'none', 'video': 'none', 'warmup_frames': warmup_frames,
                 'experiment_sources': {p.name: sha256(p) for p in Path(__file__).parent.iterdir() if p.suffix in ('.py', '.lua')}}
     def save():
         atomic_json(run/'manifest.json', manifest)
@@ -215,6 +217,8 @@ def collect(config, output, samples=6, max_attempts=12, max_matches=132, max_sec
         # Detach only this isolated collector's formal lifecycle listeners.
         # Never begin a formal session or classify these matches as certification.
         bridge.send('astra_load_sub:unsubscribe();astra_save_sub:unsubscribe();astra_reset_sub:unsubscribe();observe()')
+        if warmup_frames:
+            bridge.send(f"speed('fast');next_round({warmup_frames})")
         manifest['formal_lifecycle_detached_for_collection'] = True
         for ordinal in range(1, max_attempts+1):
             attempt = {'ordinal': ordinal, 'status': 'running', 'outcome': None, 'readiness': {}, 'matches': [], 'captures': []}
@@ -255,6 +259,7 @@ def collect(config, output, samples=6, max_attempts=12, max_matches=132, max_sec
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--warmup-frames',type=int,default=0)
     parser.add_argument('--samples', type=int, default=6)
     parser.add_argument('--max-attempts', type=int, default=12)
     parser.add_argument('--max-matches', type=int, default=132)

@@ -1,4 +1,4 @@
-"""Result-only non-TIME KO timer-tail revision, bound to an immutable perception128 parent."""
+"""Result-only zero-HP winner late-KO revision, bound to an immutable perception128 parent."""
 import importlib
 import importlib.util
 import json
@@ -8,10 +8,10 @@ from .perception128_identity import (ARCHITECTURE, INTERFACE, OBSERVATION_INTERF
                                      digest, validate_architecture)
 
 PACKAGE='astra_sf2_rl_perception128_draw'
-SCHEMA='astra.rl-screen-perception128-settlement.v11'
-PROTOCOL='native-pip-ko-late-ko-time-and-confirmed-draw-v11'
+SCHEMA='astra.rl-screen-perception128-settlement.v12'
+PROTOCOL='native-pip-ko-late-ko-time-and-confirmed-draw-v12'
 TIMING_PROTOCOL='restore-held-input-before-rpc-resume-v1'
-INPUT_NAMES=('perception128_draw_builder.py','perception128_draw_identity.py','settlement_v11.lua')
+INPUT_NAMES=('perception128_draw_builder.py','perception128_draw_identity.py','settlement_v12.lua')
 
 
 def validate_parent(root):
@@ -25,7 +25,7 @@ def validate_parent(root):
 
 def derive(captured,inputs):
     out=dict(captured)
-    out['settlement.lua']=inputs['settlement_v11.lua']
+    out['settlement.lua']=inputs['settlement_v12.lua']
     out['perception128_draw_identity.py']=inputs['perception128_draw_identity.py']
     for name in ('initialize.py','support.py','batch_train.py'):
         if out[name].count(b'from .perception128_timing_identity import')!=(2 if name=='support.py' else 1):raise RuntimeError('Unexpected parent identity import: '+name)
