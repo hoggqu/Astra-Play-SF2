@@ -1,4 +1,4 @@
-"""Build a separate perception128 source with a strictly observed zero-HP late KO."""
+"""Build a separate perception128 source with a strictly observed non-TIME KO timer tail."""
 import argparse
 import json
 from pathlib import Path
@@ -32,7 +32,7 @@ def build(source,output):
     manifest.update(schema=SCHEMA,package=PACKAGE,settlement_protocol=PROTOCOL,
                     status='candidate',native_validated=False,parent_build_sha256=digest((source/'build.json').read_bytes()),
                     derived_sha256={n:digest(b) for n,b in derived.items()},frozen_files_sha256=frozen,
-                    scope='Result-only observed zero-HP late KO with mature native pip confirmation; all policy/input/reward/optimizer bytes unchanged.')
+                    scope='Result-only observed non-TIME KO timer tail with mature native pip confirmation; all policy/input/reward/optimizer bytes unchanged.')
     (output/'build.json').write_text(json.dumps(manifest,indent=2)+'\n')
     validate_build(manifest,package)
     if validate_parent(source)[1]!=captured:raise RuntimeError('Parent changed during KO build')

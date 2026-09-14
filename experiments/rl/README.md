@@ -13,7 +13,7 @@
 和已显示的飞行道具接入共享 PPO，继续保留 85 动作及旧冻结模型。
 
 **当前新训练入口：**[自主训练脚本](AUTOTRAIN.md)，自动构建128×128共享策略的
-managed执行包，包含[批次输入时序修复](INPUT_TIMING.md)与[零血量延迟KO结算v10](SETTLEMENT_V10.md)，
+managed执行包，包含[批次输入时序修复](INPUT_TIMING.md)与[普通KO计时结算v11](SETTLEMENT_V11.md)，
 支持完整更新边界停止、报告和CPU/CUDA选择。也可单独运行
 `python -m experiments.rl.managed_builder --output NEW_DIRECTORY`构建，再接入
 [版本化编排器](VERSIONED_CAMPAIGN.md)。旧timing/v6/v7等包保留作历史对照，

@@ -7,8 +7,8 @@ import sys
 from .perception128_identity import ARCHITECTURE, INTERFACE, OBSERVATION_INTERFACE, digest, validate_architecture
 
 PACKAGE = 'astra_sf2_rl_managed'
-SCHEMA = 'astra.rl-managed-perception128.v5'
-PROTOCOL = 'native-pip-ko-late-ko-time-and-confirmed-draw-v10'
+SCHEMA = 'astra.rl-managed-perception128.v6'
+PROTOCOL = 'native-pip-ko-late-ko-time-and-confirmed-draw-v11'
 TIMING_PROTOCOL = 'restore-held-input-before-rpc-resume-v1'
 STOP_PROTOCOL = 'ppo-update-stop-file-v1'
 SAMPLING_PROTOCOL = 'recent_round_win_opponent_sampling_v1'
